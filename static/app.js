@@ -127,7 +127,7 @@ async function renderSources(){
   if(state.view!=='sources') return;
   const summary = data.auto_sync ? 'A sincronização é verificada aproximadamente a cada 30 segundos enquanto o Radar está aberto.' : 'O agendador está desativado neste ambiente; utilize Sincronizar agora.';
   const rows=data.items.length ? data.items.map(src=>`<div class="source-card">
-    <div class="source-info"><strong>${esc(src.name)}</strong><span class="table-sub">${src.kind==='file'?'Arquivo local':src.kind==='web'?'Varredura de site público':'Feed HTTPS'} · ${esc(src.location)}</span><span class="table-sub">A cada ${num(src.interval_minutes)} min · Última execução: ${stamp(src.last_run_at)}</span><span class="table-sub">${src.last_error?`⚠ ${esc(src.last_error)}`:src.last_result==='ok'?'✓ Última atualização concluída':src.last_result==='partial'?'⚠ Varredura parcial; veja histórico':'Aguardando a primeira atualização'}</span></div>
+    <div class="source-info"><strong>${esc(src.name)}</strong><span class="table-sub">${src.kind==='file'?'Arquivo local':src.kind==='web'?'Varredura de site público':'Feed HTTPS'} · ${esc(src.location)}</span><span class="table-sub">A cada ${num(src.interval_minutes)} min · Última execução: ${stamp(src.last_run_at)}</span><span class="table-sub">${src.last_error?`⚠ ${esc(src.last_error)}`:src.last_result==='ok'?'✓ Última atualização concluída':src.last_result==='partial'?'⚠ Nenhum anúncio identificado ou execução parcial — consulte Histórico':'Aguardando a primeira atualização'}</span></div>
     <div class="source-actions"><span class="pill ${src.last_result==='error'?'verify':'new'}">${src.enabled?'Ativa':'Pausada'}</span><button class="btn btn-small btn-primary" data-action="source-run" data-id="${src.id}" data-kind="${esc(src.kind)}">↻ Sincronizar agora</button><button class="btn btn-small" data-action="source-history" data-id="${src.id}">Histórico</button><button class="btn btn-small" data-action="source-toggle" data-id="${src.id}" data-enabled="${src.enabled}">${src.enabled?'Pausar':'Ativar'}</button><button class="btn btn-small btn-danger" data-action="source-delete" data-id="${src.id}">Excluir</button></div>
   </div>`).join('') : empty('Nenhuma fonte cadastrada','Adicione o endereço HTTPS público de uma imobiliária ou um feed de dados.',false);
   $('#main').innerHTML=header('SINCRONIZAÇÃO','Fontes automáticas','Cadastre páginas públicas de imobiliárias e acompanhe os anúncios encontrados.',`<button class="btn" data-nav="import">Importar manualmente →</button>`)+
@@ -168,7 +168,11 @@ async function showSourceHistory(id){
   try {
     const data=await request(`/sources/${id}/runs`);
     const target=$('#source-feedback');if(!target)return;
-    target.innerHTML=`<div class="result"><strong>Últimas sincronizações</strong>${data.items.length?data.items.map(r=>`<p>${stamp(r.started_at)} — ${esc(r.status)} — ${num(r.created)} novos / ${num(r.updated)} atualizados / ${num(r.failed)} inválidos · ${esc(r.message)}</p>`).join(''):'<p>Nenhuma sincronização realizada.</p>'}</div>`;
+    const statuses={running:'Em execução',ok:'Concluída',partial:'Incompleta / nenhum anúncio',error:'Falha'};
+    target.innerHTML=`<div class="result" id="history-${id}"><strong>Diagnóstico da varredura</strong>${data.items.length?data.items.map(r=>`<p><strong>${esc(statuses[r.status]||r.status)}</strong> — ${stamp(r.started_at)}<br>${num(r.created)} novos / ${num(r.updated)} atualizados / ${num(r.failed)} inválidos<br>${esc(r.message)}</p>`).join(''):'<p>Nenhuma sincronização realizada.</p>'}${data.items.some(r=>r.status==='running')?'<small>Atualização automática do histórico enquanto a varredura está em execução.</small>':''}</div>`;
+    if(data.items.some(r=>r.status==='running')){
+      setTimeout(()=>{if(state.view==='sources' && $('#history-'+id))showSourceHistory(id);},2500);
+    }
   }catch(e){toast(e.message,true);}
 }
 
@@ -203,7 +207,7 @@ async function createMap(buildings){
 }
 function renderAbout(){
   $('#main').innerHTML=header('SOBRE O PRODUTO','Inteligência imobiliária, sem complicações','Um radar local para organizar anúncios públicos e fontes de dados em oportunidades.')+
-  `<div class="hero"><div class="hero-copy"><div class="hero-kicker">RADAR DE CAPTAÇÃO · V0.3</div><h2>Uma plataforma pensada para <span>identificar oportunidades reais.</span></h2><p>Os dados permanecem na instalação local. Sites públicos (respeitando robots.txt) e feeds podem ser atualizados enquanto o aplicativo está aberto.</p></div><div class="hero-orbit">⌖</div></div>`+
+  `<div class="hero"><div class="hero-copy"><div class="hero-kicker">RADAR DE CAPTAÇÃO · V0.3.1</div><h2>Uma plataforma pensada para <span>identificar oportunidades reais.</span></h2><p>Os dados permanecem na instalação local. Sites públicos (respeitando robots.txt) e feeds podem ser atualizados enquanto o aplicativo está aberto.</p></div><div class="hero-orbit">⌖</div></div>`+
   `<div class="about-grid"><div class="about-card"><div class="big-icon">▤</div><h3>Identificação conservadora</h3><p>Agrupa endereços completos e nome de prédio com bairro. Nunca inventa o número de um imóvel.</p></div><div class="about-card"><div class="big-icon">≡</div><h3>Controle de captações</h3><p>Status, observações, histórico e registros associados ajudam a organizar o acompanhamento.</p></div><div class="about-card"><div class="big-icon">↧</div><h3>Seus dados, suas regras</h3><p>Arquivos CSV, Excel e JSON, varredura limitada de páginas públicas e armazenamento local SQLite.</p></div></div>`+
   `<div class="notice"><strong>Importante:</strong> há coleta de HTML público para sites com acesso permitido por robots.txt, sem contornar bloqueios. Utilize somente informações obtidas de fontes com permissão compatível. Endereços parciais não identificam um prédio com segurança. O MVP não possui contas, login ou isolamento entre empresas — não exponha diretamente na internet.</div>`;
 }
@@ -247,7 +251,7 @@ document.addEventListener('click',async event=>{
     case 'scan-export':window.location.assign('/api/reports/availability/export?'+new URLSearchParams({zone:state.scanZone,transaction:state.scanTransaction,format:'xlsx'}));return;
     case 'source-run': {
       b.disabled=true;b.textContent='Sincronizando...';
-      try{if(b.dataset.kind==='web'){await request(`/sources/${b.dataset.id}/start`,{method:'POST'});toast('Varredura iniciada. Consulte o histórico para ver o resultado.');nav('sources');}else{const r=await request(`/sources/${b.dataset.id}/run`,{method:'POST'});toast(r.status==='error'?`Falha: ${r.message}`:`Sincronização: ${r.created} novo(s), ${r.updated} atualizado(s)`,r.status==='error');nav('sources');}}
+      try{if(b.dataset.kind==='web'){await request(`/sources/${b.dataset.id}/start`,{method:'POST'});toast('Varredura iniciada. Acompanhe o diagnóstico nesta tela.');await renderSources();await showSourceHistory(b.dataset.id);}else{const r=await request(`/sources/${b.dataset.id}/run`,{method:'POST'});toast(r.status==='error'?`Falha: ${r.message}`:`Sincronização: ${r.created} novo(s), ${r.updated} atualizado(s)`,r.status==='error');nav('sources');}}
       catch(e){toast(e.message,true);b.disabled=false;b.textContent='↻ Sincronizar agora';}return;
     }
     case 'source-history':await showSourceHistory(b.dataset.id);return;

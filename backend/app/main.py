@@ -94,7 +94,7 @@ def create_app(database_url: str | None = None, imports_dir: str | Path | None =
             if thread is not None:
                 thread.join(timeout=2)
 
-    app = FastAPI(title="Radar de Captação", version="0.3.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
+    app = FastAPI(title="Radar de Captação", version="0.3.1", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
     app.state.engine = engine
     app.state.SessionLocal = SessionLocal
     app.state.imports_dir = imports
@@ -106,7 +106,7 @@ def create_app(database_url: str | None = None, imports_dir: str | Path | None =
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "service": "radar-captacao", "version": "0.3.0", "scheduler_enabled": scheduler_enabled}
+        return {"status": "ok", "service": "radar-captacao", "version": "0.3.1", "scheduler_enabled": scheduler_enabled}
 
     @app.get("/api/dashboard")
     def dashboard(db: Session = Depends(get_db)):

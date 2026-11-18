@@ -17,7 +17,7 @@ import urllib.robotparser
 import xml.etree.ElementTree as ET
 from collections import deque
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit, urlunsplit, unquote
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit, unquote
 
 from .sources import validate_feed_url, public_address_only
 
@@ -27,14 +27,20 @@ MAX_CANDIDATES = 200
 MAX_HTML_BYTES = 1_000_000
 MAX_SITEMAP_BYTES = 1_000_000
 MIN_DELAY_SECONDS = 0.75
-LISTING_HINT = re.compile(r"(?:im[oó]ve[il]|apartament|casa|sobrado|kitnet|studio|loft|flat|terreno|alug|loca|venda|property|listing)", re.I)
+LISTING_HINT = re.compile(r"(?:im[oó]ve[il]|apartament|casa|sobrado|kitnet|studio|loft|flat|terreno|alug|loca|venda|property|listing|detalh|an[uú]ncio|ficha|oferta)", re.I)
+DETAIL_HINT = re.compile(r"(?:/(?:imovel|imoveis|detalhes|detalhe|anuncio|property|listing|ficha|oferta)/[^/?]+|(?:apartamento|casa|terreno|sobrado|studio)[^/]*[-/](?:\d{3,}|[a-z\d-]+[-/]\d{3,}))", re.I)
+INDEX_PATH = re.compile(r"/(?:imoveis|apartamentos|casas|aluguel|locacao|venda|comprar|alugar|buscar|busca|pesquisa|catalogo|lista)$", re.I)
+TRANSACTION_RENT = re.compile(r"\b(?:aluguel|alugar|alugu[eé]is|loca[çc][aã]o|locar|para\s+alugar|rent|rental)\b", re.I)
+TRANSACTION_SALE = re.compile(r"\b(?:venda|vender|comprar|compra|[àa]\s+venda|sale|for\s+sale)\b", re.I)
+PAGINATION_KEYS = {'page', 'pagina', 'p', 'pg', 'id', 'codigo', 'cod', 'ref', 'imovel', 'offset'}
 BAD_HINT = re.compile(r"(?:^|/)(?:login|entrar|cadastro|contato|blog|noticias|politica|privacidade|termos|admin|api|whatsapp|carrinho|favoritos|user)(?:/|$)", re.I)
 MONEY_RE = re.compile(r"R\$\s*([\d.]+(?:,\d{2})?)", re.I)
-STREET_RE = re.compile(r"\b((?:Rua|R\.|Avenida|Av\.|Travessa|Alameda|Praça|Estrada)\s+[\wÀ-ÿ\s.'-]{4,75}?)(?:\s*,\s*(\d{1,6}[A-Za-z]?))(?=\s*(?:[,|\-\n]|$))", re.I)
+STREET_RE = re.compile(r"\b((?:Rua|R\.|Avenida|Av\.|Travessa|Alameda|Praça|Estrada)\s+[^\n,|]{4,75}?)(?:\s*,\s*|\s+[nN][º°o.]?\s*)(\d{1,6}[A-Za-z]?)(?=\b|$)", re.I)
+STREET_ONLY_RE = re.compile(r"\b((?:Rua|R\.|Avenida|Av\.|Travessa|Alameda|Praça|Estrada)\s+[\wÀ-ÿ.'-]+(?:\s+[\wÀ-ÿ.'-]+){0,8})", re.I)
 AREA_RE = re.compile(r"\b(\d{1,5}(?:[,\.]\d{1,2})?)\s*m[²2]\b", re.I)
 BEDS_RE = re.compile(r"\b([1-9])\s*(?:quartos?|dormit[oó]rios?)\b", re.I)
-ADDRESS_LABEL_RE = re.compile(r"\b(?:bairro|localiza[çc][aã]o)\s*:\s*([\wÀ-ÿ\s.'-]{3,50})", re.I)
-CITY_LABEL_RE = re.compile(r"\b(?:cidade|munic[ií]pio)\s*:\s*([\wÀ-ÿ\s.'-]{3,50})", re.I)
+ADDRESS_LABEL_RE = re.compile(r"\b(?:bairro|localiza[çc][aã]o)\s*:[ \t]*([^\n|;,]{3,60})", re.I)
+CITY_LABEL_RE = re.compile(r"\b(?:cidade|munic[ií]pio)\s*:[ \t]*([^\n|;,]{3,60})", re.I)
 
 
 class ScanError(ValueError):
@@ -43,7 +49,13 @@ class ScanError(ValueError):
 
 class StrictRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise ScanError("Redirecionamento detectado. Cadastre a URL final HTTPS do site (sem redirecionamento).")
+        old, new = urlsplit(req.full_url), urlsplit(newurl)
+        # A redirect to a different host, HTTP, or non-standard port must not
+        # be followed. Same-host canonical paths and trailing slash are common.
+        if (new.scheme != 'https' or new.hostname != old.hostname or
+                new.port not in (None, 443) or new.username or new.password):
+            raise ScanError("Redirecionamento externo ou inseguro. Informe a URL HTTPS final (com www, se necessário).")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _domain(url: str):
@@ -61,8 +73,11 @@ def _safe_link(url: str, base: str, domain: str) -> str | None:
             return None
         if BAD_HINT.search(p.path):
             return None
-        # Remove marketing and session query params to avoid repeated visits.
-        return urlunsplit(("https", p.netloc.lower(), p.path or "/", "", ""))
+        # Keep explicit page numbers / listing IDs, but drop tracking/session
+        # parameters. Discarding *all* queries hid paginated inventory.
+        query = urlencode([(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
+                           if k.lower() in PAGINATION_KEYS][:5])
+        return urlunsplit(("https", p.netloc.lower(), p.path or "/", query, ""))
     except (ValueError, AttributeError):
         return None
 
@@ -178,7 +193,7 @@ def _objects(parsed: PublicHTML):
                 stack.extend(reversed(item))
             elif isinstance(item, dict):
                 yield item
-                for key in ('@graph', 'itemListElement', 'mainEntity'):
+                for key in ('@graph', 'itemListElement', 'mainEntity', 'item'):
                     if key in item:
                         stack.append(item[key])
 
@@ -202,11 +217,31 @@ def _first(*values):
     return next((v for v in values if v is not None and v != ''), None)
 
 
+def _transaction(text: str) -> str | None:
+    if TRANSACTION_RENT.search(text):
+        return 'rent'
+    if TRANSACTION_SALE.search(text):
+        return 'sale'
+    return None
+
+
+def _street_parts(value: str) -> tuple[str | None, str | None]:
+    value = re.sub(r'\s+', ' ', value or '').strip()
+    matched = STREET_RE.search(value)
+    if matched:
+        return matched.group(1).strip(' ,. -'), matched.group(2)
+    # A street without number is retained as *partial*, never inferred.
+    matched = STREET_ONLY_RE.search(value)
+    if matched:
+        return matched.group(1).strip(' ,. -'), None
+    return value[:120] or None, None
+
+
 def _structured_listing(obj, url: str):
     typ = obj.get('@type', [])
     types = {str(x).lower() for x in (typ if isinstance(typ, list) else [typ])}
     # ItemList/LocalBusiness/Organization often describe the site, not an individual unit.
-    properties = {'apartment', 'singlefamilyresidence', 'house', 'residence', 'realestatelisting', 'accommodation'}
+    properties = {'apartment', 'singlefamilyresidence', 'house', 'residence', 'realestatelisting', 'accommodation', 'product'}
     if not types.intersection(properties):
         return None
     addr = obj.get('address')
@@ -234,21 +269,17 @@ def _structured_listing(obj, url: str):
         area = float(area) if area else None
     except (TypeError, ValueError):
         area = None
-    text = (name+' '+str(obj.get('description') or '')+' '+url).lower()
-    transaction = 'rent' if re.search(r'alug|loca|rent', text) else 'sale' if re.search(r'vend|venda|compr|sale', text) else None
-    if not transaction:
-        return None
+    text = name+' '+str(obj.get('description') or '')+' '+url+' '+str(offer.get('name') or '')
+    transaction = _transaction(text)
+    # Property schema often omits the purpose; resolve against the page title
+    # later rather than throwing away otherwise useful structured data.
     row = dict(location, transaction=transaction,
                property_type='Casa' if types.intersection({'house', 'singlefamilyresidence'}) else 'Apartamento',
                price=price, area=area, building_name=obj.get('name') if 'building' in name.lower() or 'edif' in name.lower() else None,
                latitude=geo.get('latitude'), longitude=geo.get('longitude'))
     # schema.org usually: streetAddress = 'Rua Nome, 123'. Never invent the number.
     if row.get('street'):
-        street = str(row['street']).strip()
-        hit = STREET_RE.search(street)
-        if hit:
-            row['street'] = hit.group(1).strip()
-            row['street_number'] = hit.group(2)
+        row['street'], row['street_number'] = _street_parts(str(row['street']))
     return row
 
 
@@ -257,21 +288,25 @@ def parse_listing(html: str, url: str) -> tuple[dict | None, list[str]]:
     parsed.feed(html)
     candidates = list(_objects(parsed))
     listing_data = next((r for obj in candidates if (r := _structured_listing(obj, url))), None)
-    full_text = ' '.join(parsed.words)[:35_000]
+    # Preserve text-node boundaries. Joining with spaces made address regexes
+    # consume the following label, and could lose street numbers entirely.
+    full_text = '\n'.join(parsed.words)[:35_000]
     title = (parsed.meta.get('og:title') or parsed.title or '')[:300]
-    looks_like_listing = bool(LISTING_HINT.search(urlsplit(url).path))
+    metadata = ' '.join(str(parsed.meta.get(k, '')) for k in ('description', 'og:description', 'twitter:description'))
+    looks_like_listing = bool(LISTING_HINT.search(urlsplit(url).path) or DETAIL_HINT.search(urlsplit(url).path))
     # A listing card on a search-result page is NOT sufficient to identify one property.
     has_property_schema = listing_data is not None
     if not looks_like_listing and not has_property_schema:
         return None, parsed.links
     # Avoid treating search/index pages as individual properties.
     path = urlsplit(url).path.rstrip('/').lower()
-    if re.search(r'/(?:imoveis|apartamentos|casas|aluguel|locacao|venda|comprar|alugar)$', path):
+    if INDEX_PATH.search(path):
         return None, parsed.links
-    transaction = 'rent' if re.search(r'alug|loca|rent', title+' '+url) else 'sale' if re.search(r'vend|venda|compr|sale', title+' '+url) else None
-    if not listing_data and not transaction:
+    transaction = _transaction(title+' '+metadata+' '+url+' '+full_text[:3000])
+    if not transaction and not (listing_data and listing_data.get('transaction')):
         return None, parsed.links
     row = listing_data or {'transaction': transaction}
+    row['transaction'] = row.get('transaction') or transaction
     if not row.get('price'):
         m = MONEY_RE.search(full_text[:6000])
         if m:
@@ -282,6 +317,8 @@ def parse_listing(html: str, url: str) -> tuple[dict | None, list[str]]:
         if m:
             row['street'] = m.group(1).strip()
             row['street_number'] = m.group(2)
+        elif (m := STREET_ONLY_RE.search(metadata)):
+            row['street'] = m.group(1).strip(' ,. -')
     if not row.get('area'):
         m = AREA_RE.search(full_text[:9000])
         if m:
@@ -302,6 +339,12 @@ def parse_listing(html: str, url: str) -> tuple[dict | None, list[str]]:
         row['property_type'] = 'Casa' if 'casa' in (url+title).lower() else 'Apartamento'
     # Never store contact names, phone numbers, details not used for property analysis.
     if not (row.get('street') or row.get('neighborhood') or row.get('city')):
+        return None, parsed.links
+    # Guard against category/search pages being registered as individual ads.
+    # Without schema, require a plausible detail URL AND a property signal.
+    if not listing_data and not DETAIL_HINT.search(path):
+        return None, parsed.links
+    if not listing_data and not (row.get('price') or row.get('area') or row.get('bedrooms')):
         return None, parsed.links
     if not row.get('transaction'):
         return None, parsed.links
@@ -326,7 +369,7 @@ def _sitemap_urls(xml: bytes, base: str, domain: str) -> tuple[list[str], list[s
         if is_index:
             if len(indexes) < 3:
                 indexes.append(url)
-        elif LISTING_HINT.search(urlsplit(url).path):
+        elif LISTING_HINT.search(urlsplit(url).path) or DETAIL_HINT.search(urlsplit(url).path):
             if len(links) < MAX_CANDIDATES:
                 links.append(url)
     return links, indexes
@@ -345,25 +388,34 @@ def crawl_public_site(seed_url: str, *, max_pages: int = MAX_PAGES, fetch=None, 
         sitemaps = [f'https://{domain}/sitemap.xml']
     queue = deque([seed_url])
     seen = set()
+    queued = {seed_url}
     for sitemap in sitemaps[:3]:
         if not robots.can_fetch(USER_AGENT, sitemap):
             continue
         try:
             xml, _ = fetch(sitemap, domain, MAX_SITEMAP_BYTES)
             links, indexes = _sitemap_urls(xml, sitemap, domain)
-            queue.extend(links)
+            for link in links:
+                if link not in queued:
+                    queue.append(link)
+                    queued.add(link)
             for child in indexes[:2]:
                 if not robots.can_fetch(USER_AGENT, child):
                     continue
                 try:
                     body, _ = fetch(child, domain, MAX_SITEMAP_BYTES)
                     found, _ = _sitemap_urls(body, child, domain)
-                    queue.extend(found)
+                    for link in found:
+                        if link not in queued:
+                            queue.append(link)
+                            queued.add(link)
                 except (ScanError, FileNotFoundError):
                     pass
         except (ScanError, FileNotFoundError):
             pass
     rows, blocked, errors = [], 0, []
+    reasons = {'not_listing':0, 'missing_data':0, 'unreadable':0}
+    checked_urls = []
     count = 0
     max_pages = max(1, min(int(max_pages), MAX_PAGES))
     last_fetch = None
@@ -385,19 +437,31 @@ def crawl_public_site(seed_url: str, *, max_pages: int = MAX_PAGES, fetch=None, 
             html = body.decode('utf-8-sig', 'replace')
             row, links = parse_listing(html, url)
             count += 1
+            if len(checked_urls) < 4:
+                checked_urls.append(url[:160])
             if row:
                 rows.append(row)
+            else:
+                reasons['not_listing'] += 1
             for link in links[:250]:
                 child = _safe_link(link, url, domain)
-                if child and child not in seen and LISTING_HINT.search(urlsplit(child).path):
+                if child and child not in seen and child not in queued and LISTING_HINT.search(urlsplit(child).path):
                     if len(queue) < MAX_CANDIDATES:
-                        queue.append(child)
+                        # Prioritize likely detail pages over catalog listings.
+                        if DETAIL_HINT.search(urlsplit(child).path) and not INDEX_PATH.search(urlsplit(child).path):
+                            queue.appendleft(child)
+                        else:
+                            queue.append(child)
+                        queued.add(child)
         except FileNotFoundError:
             errors.append(f'Página inexistente: {url[:120]}')
         except ScanError as exc:
             errors.append(f'{url[:80]}: {exc}')
+            reasons['unreadable'] += 1
     if count == 0:
-        raise ScanError('Nenhuma página HTML acessível. Confira URL, robots.txt e bloqueios do site.')
+        hint = (' Exemplos: ' + '; '.join(errors[:2])) if errors else ''
+        raise ScanError('Nenhuma página HTML acessível. Confira a URL final HTTPS, robots.txt e bloqueios do site.' + hint)
     info = {'pages':count, 'discovered':len(seen), 'blocked':blocked, 'extracted':len(rows),
-            'errors':errors[:4], 'scope':'apenas domínio cadastrado; HTML público'}
+            'errors':errors[:4], 'reasons':reasons, 'sample_urls':checked_urls,
+            'scope':'apenas domínio cadastrado; HTML público'}
     return rows, info

@@ -193,3 +193,27 @@ Não suba arquivos com dados reais, bancos de dados nem tokens pessoais. O `.git
 ### Se o navegador ficar carregando indefinidamente
 
 A aplicação precisa ser acessada em `http://127.0.0.1:8000/` com o arquivo `iniciar_windows.bat` aberto. Não abra `static/index.html` diretamente, nem utilize caminhos `file:///...`. Para testar o servidor, acesse `http://127.0.0.1:8000/api/health` e confirme que aparece `"status": "ok"`. Se a página estiver antiga, force uma recarga com `Ctrl+F5` e verifique o console do navegador em `F12`.
+
+## Diagnóstico de varredura sem resultados (v0.3.1)
+
+Se o Radar retornar zero anúncios, acesse **Fontes automáticas → Histórico**.
+O histórico agora mostra o estado **Em execução** enquanto pesquisa e descreve
+quantas páginas HTML foram analisadas, quantos anúncios foram reconhecidos,
+quantos endereços foram rejeitados pelo `robots.txt` e os principais erros.
+
+- **Nenhuma página HTML acessível:** confira se o endereço cadastrado usa `https://`
+  e se está na versão final do domínio (`www` ou sem `www`). O Radar não segue
+  redirecionamentos entre domínios, não resolve CAPTCHA e não ignora `robots.txt`.
+- **Páginas analisadas, zero anúncios:** o site provavelmente usa um modelo de
+  página ou carregamento por JavaScript que o coletor HTML ainda não entende.
+  Para melhorar a compatibilidade, são necessários exemplos de **URLs públicas**
+  de anúncios daquele site, sem credenciais.
+- **Anúncios identificados, endereço parcial:** o endereço completo não estava
+  publicamente divulgado. O Radar não tenta adivinhar o número do edifício.
+- **Resultados não aparecem na tabela:** aguarde o estado sair de **Em execução**,
+  depois abra **Varredura por zona**, selecionando **Todas as zonas** e sem filtros.
+
+Na versão 0.3.1, o reconhecimento aceita mais formatos de páginas de detalhes,
+dados estruturados com finalidade apenas no título e URLs de paginação. O sistema
+não garante cobertura de todos os sites e nenhum teste com uma imobiliária
+específica é afirmado sem executar uma varredura sobre ela.

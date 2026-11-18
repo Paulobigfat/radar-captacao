@@ -189,9 +189,13 @@ def execute_source(db: Session, source: DataSource, imports_dir: Path, importer)
     The caller serializes concurrent runs using an app-level lock.
     """
     now = utcnow()
-    run = SourceRun(source_id=source.id, started_at=now, status='running')
+    run = SourceRun(source_id=source.id, started_at=now, status='running',
+                    message='Consulta iniciada. Lendo páginas públicas e verificando anúncios...')
     db.add(run)
-    db.flush()
+    # This commit makes an in-progress scan visible to the UI while the worker
+    # is running. Previously it was invisible until completion.
+    db.commit()
+    run_id = run.id
     try:
         scan_info = None
         if source.kind == 'web':
@@ -218,15 +222,25 @@ def execute_source(db: Session, source: DataSource, imports_dir: Path, importer)
                            + run.message)
             if not rows:
                 run.status = 'partial'
-                run.message += '; sem endereços ou imóveis reconhecidos nas páginas visitadas'
-        source.last_error = None if stats['failed'] == 0 else run.message
+                details = scan_info.get('reasons', {})
+                run.message += (f"; nenhum anúncio compatível reconhecido. "
+                                f"Páginas sem dados compatíveis: {details.get('not_listing', 0)}; "
+                                f"bloqueadas pelo robots.txt: {scan_info.get('blocked', 0)}; "
+                                f"falhas de leitura: {len(scan_info.get('errors', []))}. "
+                                "O site pode usar JavaScript ou formato ainda não suportado.")
+            if scan_info.get('errors'):
+                run.message += '; Exemplos de erros: '+', '.join(scan_info['errors'][:2])
+        run.message = run.message[:480]
+        source.last_error = run.message if run.status != 'ok' else None
         source.last_result = run.status
     except Exception as exc:
         db.rollback()
-        # Reacquire the row in case rollback invalidated changes.
+        # Reuse the persisted running record; don't leave a phantom running
+        # entry and add a second error record for one attempted scan.
         source = db.get(DataSource, source.id)
-        run = SourceRun(source_id=source.id, started_at=now, status='error', message=str(exc)[:400])
-        db.add(run)
+        run = db.get(SourceRun, run_id)
+        run.status = 'error'
+        run.message = str(exc)[:480]
         source.last_error = str(exc)[:400]
         source.last_result = 'error'
     source.last_run_at = utcnow()
