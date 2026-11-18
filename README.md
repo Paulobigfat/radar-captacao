@@ -144,6 +144,6 @@ Se `main` ainda não existir, crie a branch local (`git branch -M main`) antes d
 **Stack:** Python • FastAPI • SQLAlchemy • SQLite • OpenPyXL • HTML/CSS/JavaScript • Leaflet (mapa opcional).
 
 
-### Se o navegador ficar carregando indefinidamente
+### Diagnóstico de carregamento
 
-A aplicação precisa ser acessada em `http://127.0.0.1:8000/` com o arquivo `iniciar_windows.bat` aberto. Não abra `static/index.html` diretamente, nem utilize caminhos `file:///...`. Para testar o servidor, acesse `http://127.0.0.1:8000/api/health` e confirme que aparece `"status": "ok"`. Se a página estiver antiga, force uma recarga com `Ctrl+F5` e verifique o console do navegador em `F12`.
+Use `http://127.0.0.1:8000/` com o inicializador aberto. Confira `http://127.0.0.1:8000/api/health` e pressione `Ctrl+F5` para recarregar a interface.

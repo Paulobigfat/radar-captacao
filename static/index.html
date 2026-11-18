@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b141e" />
+  <meta name="description" content="Radar de Captação — inteligência e organização de oportunidades imobiliárias." />
+  <title>Radar de Captação | Painel</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%230e2630'/%3E%3Cpath d='M17 44V20h15c17 0 17 22 0 22H17m12-10 16 12' fill='none' stroke='%237de2b6' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="/static/app.js" defer></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const main = document.getElementById('main');
+      if (location.protocol === 'file:') {
+        main.innerHTML = '<section class="empty"><h2>Abra o Radar pelo servidor local</h2><p>Execute iniciar_windows.bat e acesse http://127.0.0.1:8000 no navegador.</p></section>';
+        return;
+      }
+      setTimeout(() => {
+        if (main?.querySelector('.loading-screen')) {
+          main.innerHTML = '<section class="empty"><h2>O painel não respondeu</h2><p>Confira /api/health, recarregue com Ctrl+F5 e veja o console em F12.</p></section>';
+        }
+      }, 15000);
+    });
+  </script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-symbol"><svg width="26" height="26" viewBox="0 0 32 32" fill="none"><path d="M7 26V6h11c13 0 13 15 0 15H7m10-7 10 12" stroke="currentColor" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="round"/></svg></div>
+        <div class="brand-copy"><span class="brand-name">RADAR<span class="brand-dot">.</span></span><span class="brand-sub">CAPTAÇÃO IMOBILIÁRIA</span></div>
+      </div>
+      <div class="nav-category">WORKSPACE</div>
+      <nav class="side-nav" aria-label="Navegação principal">
+        <button type="button" class="nav-item active" data-nav="dashboard"><span class="nav-ico">◫</span><span>Visão geral</span></button>
+        <button type="button" class="nav-item" data-nav="buildings"><span class="nav-ico">▤</span><span>Oportunidades</span></button>
+        <button type="button" class="nav-item" data-nav="listings"><span class="nav-ico">≡</span><span>Anúncios</span></button>
+        <button type="button" class="nav-item" data-nav="map"><span class="nav-ico">◎</span><span>Mapa</span></button>
+      </nav>
+      <div class="nav-category second">FERRAMENTAS</div>
+      <nav class="side-nav" aria-label="Ferramentas">
+        <button type="button" class="nav-item" data-nav="import"><span class="nav-ico">⇧</span><span>Importar dados</span></button>
+        <button type="button" class="nav-item" data-nav="about"><span class="nav-ico">ⓘ</span><span>Sobre o Radar</span></button>
+      </nav>
+      <div class="side-bottom">
+        <div class="side-insight"><div class="insight-mark">✦</div><strong>Da informação à captação.</strong><p>Transforme anúncios dispersos em oportunidades organizadas.</p><button type="button" data-nav="import">Importar anúncios <span>↗</span></button></div>
+        <div class="sidebar-foot"><span class="live-pulse"></span><span>Ambiente local</span><span class="foot-version">v0.1</span></div>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-left"><button class="mobile-toggle" id="mobile-toggle" aria-label="Abrir menu">☰</button><span class="breadcrumb">WORKSPACE <span>/</span> <strong id="breadcrumb-current">Visão geral</strong></span></div>
+        <div class="topbar-actions"><div class="topbar-tag"><span class="live-pulse"></span> Sistema operacional</div><button class="btn btn-primary btn-top" data-nav="import">＋ <span>Importar anúncios</span></button><div class="avatar">RC</div></div>
+      </header>
+      <main class="main" id="main" aria-live="polite"><div class="loading-screen"><span class="spinner"></span> Carregando Radar...</div></main>
+      <footer class="footer"><span>RADAR DE CAPTAÇÃO <span class="f-separator">/</span> Versão local</span><span>Dados importados por você • Nenhuma coleta automática</span></footer>
+    </div>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast-container" role="status" aria-live="polite"></div>
+</body>
+</html>

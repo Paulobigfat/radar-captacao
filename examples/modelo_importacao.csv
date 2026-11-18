@@ -1,0 +1,3 @@
+origem,id_anuncio,finalidade,tipo,preco,area,quartos,vagas,cidade,bairro,rua,numero,edificio,unidade,link
+Dados autorizados,EX-001,locacao,Apartamento,2500,70,2,1,Porto Alegre,Bom Fim,Rua Exemplo,100,Edifício Demonstrativo,301,
+Dados autorizados,EX-002,venda,Apartamento,480000,70,2,1,Porto Alegre,Bom Fim,Rua Exemplo,100,Edifício Demonstrativo,402,
