@@ -2,9 +2,9 @@
 
 **Identifique edifícios com anúncios imobiliários e organize oportunidades de captação.**
 
-Aplicação web **local-first**, gratuita para execução local, com painel responsivo, backend Python/FastAPI, banco SQLite, organização de anúncios por prédio, **sincronização automática de feeds autorizados** e controle do funil de prospecção.
+Aplicação web **local-first** com painel responsivo, FastAPI/SQLite, agrupamento de anúncios, **varredura limitada de páginas HTML públicas**, leitura de sitemaps, sincronização de feeds e controle de oportunidades.
 
-> **Atenção:** a ferramenta não extrai anúncios automaticamente do ZAP Imóveis, Viva Real ou outros portais. Ela pode importar dados fornecidos por você e sincronizar **feeds CSV/JSON para os quais você tem autorização de acesso e uso**. Ela não revela proprietários nem endereços ocultos.
+> **Importante:** a varredura **não precisa de API ou login** para páginas publicamente acessíveis. Ela respeita `robots.txt`, não contorna bloqueios, não coleta contatos pessoais e não revela endereços ocultos. O uso acadêmico não dá autorização para ignorar termos ou restrições dos sites. A extração varia conforme a estrutura HTML de cada imobiliária; muitos sites JavaScript podem não funcionar sem adaptador específico.
 
 ## 1. Primeiros passos (Windows)
 
@@ -39,14 +39,32 @@ uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 - **Oportunidades:** busque edifícios, filtre por bairro e status e abra detalhes.
 - **Anúncios:** consulte valores, informações disponíveis, links de origem e nível de precisão.
 - **Mapa:** exibe edifícios com coordenadas informadas na importação. A visualização cartográfica usa Leaflet/OpenStreetMap via CDN, exigindo internet e disponibilidade dos serviços de mapas. Sem internet, os demais recursos continuam funcionando.
-- **Fontes automáticas:** cadastre CSV/JSON na pasta `imports/` ou um feed HTTPS autorizado; sincronize quando desejar ou por intervalo enquanto o servidor estiver aberto.
+- **Fontes automáticas:** cadastre o endereço HTTPS público de uma imobiliária, um arquivo CSV/JSON local ou um feed HTTPS; sincronize manualmente ou por intervalo.
+- **Varredura por zona:** consulte os anúncios encontrados por zona, bairro, endereço divulgado, valor e origem. Exporte Excel e CSV. As zonas são configuráveis no arquivo `config/zonas.json`.
 - **Importar dados:** envie planilhas CSV/XLSX ou arquivos JSON. Há um modelo e dados fictícios de demonstração acessíveis pela tela.
 - **Cadastro manual:** insira anúncios individualmente.
 - **Exportação:** baixe anúncios ou edifícios em Excel e CSV pela API.
 
 Para iniciar com dados fictícios, abra **Importar dados** e clique em **Carregar dados fictícios de demonstração**. Esses registros **não representam imóveis reais** e contêm endereços inventados.
 
-## 3. Sincronização automática com fontes autorizadas
+## 3. Pesquisar páginas públicas de imobiliárias (sem API ou login)
+
+1. Abra **Fontes automáticas** e clique em **Adicionar uma fonte**.
+2. Dê um nome identificável, selecione **Site público de imobiliária (HTML + sitemap)** e cole a URL HTTPS final de uma página com anúncios da imobiliária, por exemplo `https://www.exemplo.com.br/imoveis` (domínio fictício).
+3. Clique em **Adicionar fonte** e depois **Sincronizar agora**. A varredura inicia em segundo plano; clique **Histórico** para acompanhar o resultado.
+4. Abra **Varredura por zona** e filtre região, endereço ou finalidade. Clique em **Exportar Excel** para obter a lista.
+
+O sistema verifica `robots.txt` antes das páginas e restringe a visita ao domínio indicado, sem login, contorno de CAPTCHA, acesso a APIs privadas ou procura por números de imóveis escondidos. Consulta a página inicial, links de anúncios e até três sitemaps informados, além de um sitemap padrão. Há um teto de **24 páginas HTML por execução**, com atraso entre requisições, limites de tamanho e tempo de conexão, e proibição de acessar redes locais ou redirecionamentos inesperados. Quando o site nega acesso, a coleta é interrompida e a falha aparece no histórico.
+
+**Quais dados entram?** Campos explicitamente presentes no HTML/JSON-LD público: rua e número *se exibidos*, cidade, bairro, preço, área, categoria, tipo (venda/locação), link de origem. Não coleta nomes, telefones ou dados pessoais para prospecção. O sistema não infere endereço completo a partir de um mapa aproximado.
+
+**Zonas:** `config/zonas.json` contém um **exemplo inicial indicativo para Porto Alegre**, que deve ser revisado conforme a divisão geográfica adotada no estudo. Você pode acrescentar cidades, zonas e bairros. Para aplicar alterações, reinicie o Radar. Bairros desconhecidos aparecem em **Não classificada**. O relatório preserva a coluna de **precisão** do endereço.
+
+**Limitações:** páginas montadas exclusivamente no navegador por JavaScript, anúncios sem preço/finalidade ou endereços ocultos podem não ser detectados. Resultados são **imóveis anunciados observados no momento da coleta, não comprovação de disponibilidade atual**; exclusões do anúncio não são inferidas automaticamente. Para um site específico, pode ser necessário um extrator adaptado à sua marcação HTML. A implementação foi testada com páginas fictícias locais; a compatibilidade com portais reais não foi certificada.
+
+---
+
+## 4. Sincronização automática com feeds e arquivos autorizados
 
 Para experimentar **sem dados reais**, abra o menu **Fontes automáticas**, preencha:
 
@@ -68,7 +86,7 @@ Também é possível configurar a URL de um **feed HTTPS autorizado** em formato
 - Para desativar globalmente o agendador em um ambiente de teste, defina `RADAR_AUTO_SYNC=0` antes de iniciar o backend.
 - Para utilizar integrações oficiais ou licenciadas de portais, obtenha os detalhes contratuais e o formato do feed diretamente com o provedor.
 
-## 4. Formato dos arquivos
+## 5. Formato dos arquivos
 
 Exemplo de colunas CSV aceitas (nomes em inglês também são aceitos):
 
@@ -81,12 +99,12 @@ Dados autorizados,EX-001,locacao,Apartamento,2500,70,2,1,Porto Alegre,Bom Fim,Ru
 - `numero`: o número real **divulgado** pela fonte. Deixe vazio quando não souber;
 - `edificio`: nome do condomínio anunciado (não obrigatório);
 - `unidade`: identificador do apartamento **se explicitamente disponível**;
-- `link`: URL de referência (o Radar **não acessa** o link para preencher os dados);
+- `link`: URL de referência. A importação de arquivos não acessa esse link; a fonte do tipo `web` é que faz a varredura de páginas públicas;
 - `latitude` e `longitude` (opcionais): coordenadas obtidas legitimamente. O Radar não faz geocodificação por conta própria.
 
 São aceitos até **5 MB** e **2.500 registros por importação**. Linhas inválidas são reportadas sem interromper as demais.
 
-## 5. Como o agrupamento funciona
+## 6. Como o agrupamento funciona
 
 O sistema é intencionalmente **conservador**:
 
@@ -98,7 +116,7 @@ Quando dois anúncios citam a **mesma unidade** no mesmo prédio e finalidade, u
 
 **Importante:** `Registros não duplicados` não significa necessariamente `unidades únicas comprovadas`. Em anúncios com unidades ocultas ainda pode haver repetição.
 
-## 6. Fluxo de captação
+## 7. Fluxo de captação
 
 Cada edifício pode receber um status:
 
@@ -106,7 +124,7 @@ Cada edifício pode receber um status:
 
 Todos os estados podem ser escolhidos livremente no painel. Cada mudança gera um registro de atividade, e observações ficam associadas ao edifício.
 
-## 7. API e testes
+## 8. API e testes
 
 Documentação interativa da API: **http://127.0.0.1:8000/api/docs**.
 
@@ -125,9 +143,12 @@ Endpoints principais:
 | DELETE | `/api/listings/{id}` | Excluir registro |
 | POST | `/api/import/file` | Importar CSV/XLSX/JSON |
 | POST | `/api/import/json` | Importar lista JSON |
-| GET/POST | `/api/sources` | Listar/cadastrar fontes autorizadas |
+| GET/POST | `/api/sources` | Listar/cadastrar fontes locais, feeds e páginas públicas |
 | PATCH/DELETE | `/api/sources/{id}` | Pausar/ativar/excluir fontes |
-| POST | `/api/sources/{id}/run` | Sincronizar agora |
+| POST | `/api/sources/{id}/run` | Sincronizar agora (chamada síncrona; uso por API) |
+| POST | `/api/sources/{id}/start` | Iniciar coleta em segundo plano (ideal para sites HTML) |
+| GET | `/api/reports/availability` | Anúncios classificados por zona e endereço |
+| GET | `/api/reports/availability/export?format=xlsx` | Exportar anúncios classificados por zona |
 | GET | `/api/sources/{id}/runs` | Histórico de sincronizações |
 | GET | `/api/export/buildings?format=xlsx` | Exportar prédios |
 | GET | `/api/export/listings?format=csv` | Exportar anúncios |
@@ -141,17 +162,17 @@ python -m pytest -q
 
 O frontend utiliza **HTML/CSS/JavaScript puro**, servido pelo FastAPI, sem npm ou build. Essa decisão mantém a primeira versão executável localmente sem depender do registro npm. O painel pode ser migrado para React + TypeScript quando a funcionalidade comercial estiver validada.
 
-## 8. Segurança e limitações
+## 9. Segurança e limitações
 
 - **Somente uso local**: por padrão o servidor escuta `127.0.0.1` (não é acessível por outras máquinas na rede). A API não possui autenticação. **Não exponha o serviço na internet sem criar controle de acesso, isolamento, auditoria e outros mecanismos de proteção.**
-- Não inclui integrações pagas, agente de IA, scraping de portais, captura de contatos, adivinhação de endereços, autenticação, múltiplas empresas nem cobrança por assinatura.
+- Não inclui integrações pagas, agente de IA, scraping que contorna bloqueios, captura de contatos, adivinhação de endereços, autenticação, múltiplas empresas nem cobrança por assinatura. Inclui varredura restrita de HTML público sob regras do site.
 - Não assume que um anúncio esteja ativo por ter sido importado; o campo `listing_status` deve refletir informação atualizada pela fonte.
-- A atualização de anúncios pode acontecer por sincronização periódica de feeds autorizados enquanto o servidor estiver aberto; ainda não há serviço de monitoramento independente do computador ligado.
+- A atualização de anúncios pode acontecer por sincronização periódica de sites públicos e feeds enquanto o servidor estiver aberto; ainda não há serviço de monitoramento independente do computador ligado.
 - O banco é criado a partir dos modelos atuais (sem migrações Alembic neste MVP). Antes de atualizar versões futuras, faça backup de `backend/data/radar.db`.
-- Respeite os termos de cada fonte e a LGPD na coleta, armazenamento, exportação e uso de dados.
+- Respeite `robots.txt`, as restrições dos sites, regras de privacidade e a LGPD, inclusive em usos acadêmicos. Disponibilidade de um endereço na internet não torna todo uso permitido.
 - A tela de mapa usa Leaflet e OpenStreetMap via CDN, quando houver coordenadas. Os demais componentes não fazem chamadas externas.
 
-## 9. Publicação no GitHub
+## 10. Publicação no GitHub
 
 Se você recebeu o projeto em ZIP e deseja trabalhar localmente com o repositório existente:
 

@@ -1,7 +1,7 @@
 /* Radar de Captação — standalone browser frontend, no build tooling. */
 'use strict';
 const API = '/api';
-const state = { view:'dashboard', buildingsPage:1, listingsPage:1, buildingSearch:'', buildingStatus:'', buildingNeighborhood:'', listingSearch:'', listingTransaction:'', filterPrecision:'', lastFile:null };
+const state = { view:'dashboard', buildingsPage:1, listingsPage:1, buildingSearch:'', buildingStatus:'', buildingNeighborhood:'', listingSearch:'', listingTransaction:'', filterPrecision:'', scanZone:'', scanSearch:'', scanTransaction:'', scanPage:1, lastFile:null };
 const statuses = { new:'Novo', verify:'A verificar', prospecting:'Em prospecção', contacted:'Contato realizado', negotiating:'Em negociação', captured:'Captado', discarded:'Descartado' };
 const precisionLabels = {full:'Endereço completo', partial:'Endereço parcial', approximate:'Aproximado', unknown:'Desconhecido'};
 const $ = (selector, root=document) => root.querySelector(selector);
@@ -44,15 +44,15 @@ function header(eyebrow, title, description, buttons='') {
   return `<div class="page-head"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p class="page-description">${esc(description)}</p></div><div class="page-actions">${buttons}</div></div>`;
 }
 function nav(view) {
-  if (!['dashboard','buildings','listings','map','import','sources','about'].includes(view)) return;
+  if (!['dashboard','buildings','listings','map','scan','import','sources','about'].includes(view)) return;
   state.view=view;
   document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('active', button.classList.contains('nav-item') && button.dataset.nav === view));
   $('#sidebar').classList.remove('open');
-  const labels={dashboard:'Visão geral',buildings:'Oportunidades',listings:'Anúncios',map:'Mapa',import:'Importar dados',sources:'Fontes automáticas',about:'Sobre o Radar'};
+  const labels={dashboard:'Visão geral',buildings:'Oportunidades',listings:'Anúncios',map:'Mapa',scan:'Varredura por zona',import:'Importar dados',sources:'Fontes automáticas',about:'Sobre o Radar'};
   $('#breadcrumb-current').textContent=labels[view];
   document.title=`${labels[view]} | Radar de Captação`;
   $('#main').innerHTML=loading();
-  ({ dashboard:renderDashboard, buildings:renderBuildings, listings:renderListings, map:renderMap, import:renderImport, sources:renderSources, about:renderAbout })[view]().catch(handleError);
+  ({ dashboard:renderDashboard, buildings:renderBuildings, listings:renderListings, map:renderMap, scan:renderScan, import:renderImport, sources:renderSources, about:renderAbout })[view]().catch(handleError);
 }
 function handleError(err) { console.error(err); $('#main').innerHTML=header('ERRO','Não foi possível carregar','Ocorreu um problema ao obter os dados.')+empty('Falha na conexão',err.message,false);toast(err.message,true); }
 function bindNavButtons(root=document) {
@@ -75,7 +75,7 @@ async function renderDashboard() {
   const chartRows=d.neighborhoods.length?d.neighborhoods.map(n=>`<div class="chart-row"><div class="chart-label" title="${esc(n.name)}">${esc(n.name)}</div><div class="chart-track"><div class="chart-fill" style="width:${Math.round(n.count/chartMax*100)}%"></div></div><div class="chart-count">${num(n.count)}</div></div>`).join(''):empty('Sem dados para analisar','Importe anúncios para visualizar a distribuição por bairro.',true);
   const best=d.top_buildings.length?d.top_buildings.map(b=>`<div class="bldg-item" role="button" tabindex="0" data-building="${b.id}"><div class="building-marker">▥</div><div class="bldg-text"><strong>${esc(placeName(b))}</strong><small>${esc(b.neighborhood||b.city||'Sem bairro')} · ${num(b.listings_count)} anúncio(s)</small></div>${pill(b.status)}</div>`).join(''):empty('Nenhum edifício ainda','Comece importando sua primeira planilha.',true);
   $('#main').innerHTML=header('PAINEL DE INTELIGÊNCIA','Encontre onde estão as oportunidades.','Uma visão clara dos edifícios, anúncios e etapas de captação.',`<button class="btn btn-ghost" data-action="refresh">↻ Atualizar</button><button class="btn btn-primary" data-nav="sources">Fontes automáticas →</button>`)+
-    `<section class="hero"><div class="hero-copy"><div class="hero-kicker">✦ DADOS QUE GERAM OPORTUNIDADES</div><h2>Menos tempo procurando.<br><span>Mais imóveis para captar.</span></h2><p>Organize fontes autorizadas, identifique prédios e acompanhe cada possibilidade de captação em um só lugar.</p></div><div class="hero-orbit">⌖</div></section>`+
+    `<section class="hero"><div class="hero-copy"><div class="hero-kicker">✦ DADOS QUE GERAM OPORTUNIDADES</div><h2>Menos tempo procurando.<br><span>Mais imóveis para captar.</span></h2><p>Pesquise páginas públicas de imobiliárias, agrupe endereços divulgados e organize oportunidades de captação.</p></div><div class="hero-orbit">⌖</div></section>`+
     `<section class="stats">${stats.map(s=>`<div class="stat"><div class="stat-row"><span class="stat-label">${esc(s[0])}</span><span class="stat-icon">${s[2]}</span></div><strong>${num(s[1])}</strong><div class="stat-foot">${esc(s[3])}</div></div>`).join('')}</section>`+
     `<section class="twocol"><div class="panel"><div class="panel-head"><div><h3>Edifícios em destaque</h3><p>Priorize locais com mais anúncios ativos</p></div><button class="panel-link" data-nav="buildings">Ver todos →</button></div>${best}</div><div class="panel"><div class="panel-head"><div><h3>Concentração por bairro</h3><p>Número de edifícios identificados</p></div></div><hr class="divider"><div class="chart">${chartRows}</div><div class="small-note">Indicadores baseados exclusivamente nos dados importados. Não representam todo o mercado imobiliário.</div></div></section>`;
 }
@@ -127,20 +127,41 @@ async function renderSources(){
   if(state.view!=='sources') return;
   const summary = data.auto_sync ? 'A sincronização é verificada aproximadamente a cada 30 segundos enquanto o Radar está aberto.' : 'O agendador está desativado neste ambiente; utilize Sincronizar agora.';
   const rows=data.items.length ? data.items.map(src=>`<div class="source-card">
-    <div class="source-info"><strong>${esc(src.name)}</strong><span class="table-sub">${src.kind==='file'?'Arquivo da pasta imports/':'Feed HTTPS autorizado'} · ${esc(src.location)}</span><span class="table-sub">A cada ${num(src.interval_minutes)} min · Última execução: ${stamp(src.last_run_at)}</span><span class="table-sub">${src.last_error?`⚠ ${esc(src.last_error)}`:src.last_result==='ok'?'✓ Última atualização concluída':'Aguardando a primeira atualização'}</span></div>
-    <div class="source-actions"><span class="pill ${src.last_result==='error'?'verify':'new'}">${src.enabled?'Ativa':'Pausada'}</span><button class="btn btn-small btn-primary" data-action="source-run" data-id="${src.id}">↻ Sincronizar agora</button><button class="btn btn-small" data-action="source-history" data-id="${src.id}">Histórico</button><button class="btn btn-small" data-action="source-toggle" data-id="${src.id}" data-enabled="${src.enabled}">${src.enabled?'Pausar':'Ativar'}</button><button class="btn btn-small btn-danger" data-action="source-delete" data-id="${src.id}">Excluir</button></div>
-  </div>`).join('') : empty('Nenhuma fonte cadastrada','Adicione um feed autorizado ou teste com o arquivo de exemplo na pasta imports/.',false);
-  $('#main').innerHTML=header('SINCRONIZAÇÃO','Fontes automáticas','Receba anúncios de parceiros e feeds cuja coleta e reutilização sejam autorizadas.',`<button class="btn" data-nav="import">Importar manualmente →</button>`)+
-    `<div class="notice"><strong>Importante:</strong> o Radar não consulta automaticamente ZAP Imóveis, Viva Real ou outras páginas de anúncios. Ele sincroniza apenas feeds CSV/JSON autorizados, sem deduzir endereços ocultos. ${esc(summary)}</div>`+
+    <div class="source-info"><strong>${esc(src.name)}</strong><span class="table-sub">${src.kind==='file'?'Arquivo local':src.kind==='web'?'Varredura de site público':'Feed HTTPS'} · ${esc(src.location)}</span><span class="table-sub">A cada ${num(src.interval_minutes)} min · Última execução: ${stamp(src.last_run_at)}</span><span class="table-sub">${src.last_error?`⚠ ${esc(src.last_error)}`:src.last_result==='ok'?'✓ Última atualização concluída':src.last_result==='partial'?'⚠ Varredura parcial; veja histórico':'Aguardando a primeira atualização'}</span></div>
+    <div class="source-actions"><span class="pill ${src.last_result==='error'?'verify':'new'}">${src.enabled?'Ativa':'Pausada'}</span><button class="btn btn-small btn-primary" data-action="source-run" data-id="${src.id}" data-kind="${esc(src.kind)}">↻ Sincronizar agora</button><button class="btn btn-small" data-action="source-history" data-id="${src.id}">Histórico</button><button class="btn btn-small" data-action="source-toggle" data-id="${src.id}" data-enabled="${src.enabled}">${src.enabled?'Pausar':'Ativar'}</button><button class="btn btn-small btn-danger" data-action="source-delete" data-id="${src.id}">Excluir</button></div>
+  </div>`).join('') : empty('Nenhuma fonte cadastrada','Adicione o endereço HTTPS público de uma imobiliária ou um feed de dados.',false);
+  $('#main').innerHTML=header('SINCRONIZAÇÃO','Fontes automáticas','Cadastre páginas públicas de imobiliárias e acompanhe os anúncios encontrados.',`<button class="btn" data-nav="import">Importar manualmente →</button>`)+
+    `<div class="notice"><strong>Como funciona:</strong> a varredura consulta HTML e sitemaps públicos do domínio cadastrado, respeita robots.txt e não contorna CAPTCHA/login. Alguns sites carregam anúncios por JavaScript e podem não apresentar dados extraíveis. Não há garantia de cobertura completa nem de disponibilidade atual. ${esc(summary)}</div>`+
     `<section class="sources-layout"><div class="panel sources-panel"><div class="panel-head"><div><h3>Fontes configuradas</h3><p>${num(data.items.length)} fonte(s) · dados mantidos no banco local</p></div></div>${rows}<div id="source-feedback"></div></div>
-    <form class="panel sources-form" id="source-form"><h3>Adicionar uma fonte</h3><p class="page-description">Conecte um arquivo disponibilizado por um parceiro ou feed autorizado.</p>
+    <form class="panel sources-form" id="source-form"><h3>Adicionar uma fonte</h3><p class="page-description">Para pesquisar anúncios de uma imobiliária, escolha "Site público" e cole a página de imóveis ou o endereço principal HTTPS do site.</p>
     <div class="field"><label for="source-name">Nome da fonte</label><input id="source-name" name="name" required maxlength="100" placeholder="Ex.: Parceiro imobiliário"></div>
-    <div class="field"><label for="source-kind">Tipo de fonte</label><select id="source-kind" name="kind"><option value="file">Arquivo monitorado (local)</option><option value="https">URL HTTPS autorizada</option></select></div>
-    <div class="field"><label for="source-location">Arquivo / URL</label><input id="source-location" name="location" required placeholder="exemplo_autorizado.json"></div>
+    <div class="field"><label for="source-kind">Tipo de fonte</label><select id="source-kind" name="kind"><option value="web">Site público de imobiliária (HTML + sitemap)</option><option value="file">Arquivo monitorado (local)</option><option value="https">Feed CSV/JSON HTTPS</option></select></div>
+    <div class="field"><label for="source-location">Arquivo / URL</label><input id="source-location" name="location" required placeholder="https://www.exemplo.com.br/imoveis"></div>
     <div class="field"><label for="source-interval">Intervalo de atualização (minutos)</label><input id="source-interval" name="interval_minutes" type="number" min="15" max="10080" value="360"></div>
-    <label class="source-check"><input type="checkbox" name="rights_confirmed" required> Confirmo que tenho autorização para obter e utilizar esses dados nesta finalidade.</label>
+    <label class="source-check" id="source-rights-wrap" style="display:none"><input type="checkbox" name="rights_confirmed"> Confirmo que esse feed/arquivo foi disponibilizado para esse uso.</label>
     <button class="btn btn-primary" type="submit">＋ Adicionar fonte</button>
-    <div class="small-note">Teste gratuito: use <code>exemplo_autorizado.json</code>, incluído na pasta <code>imports/</code>. Para arquivos próprios, copie CSV ou JSON para essa pasta. Fontes HTTPS precisam ser públicas, sem autenticação e sem redirecionamento.</div></form></section>`;
+    <div class="small-note">A pesquisa pública não exige API nem login, mas respeita robots.txt e interrompe acesso negado. Use sempre uma URL HTTPS final. Endereços ocultos não podem ser recuperados; páginas dinâmicas podem requerer integração específica. Para testar um feed local, use <code>exemplo_autorizado.json</code>.</div></form></section>`;
+}
+
+async function renderScan(){
+  const params=new URLSearchParams({zone:state.scanZone,search:state.scanSearch,transaction:state.scanTransaction,page:state.scanPage,limit:50});
+  const data=await request(`/reports/availability?${params}`);
+  if(state.view!=='scan')return;
+  const rows=data.items.length?data.items.map(item=>`<tr>
+    <td><strong>${esc(item.zone)}</strong><span class="table-sub">${esc(item.neighborhood||'Bairro não divulgado')}</span></td>
+    <td><span class="table-name">${esc(item.street?`${item.street}${item.street_number?', '+item.street_number:''}`:'Endereço não divulgado')}</span><span class="table-sub">${esc(item.city||'—')}</span></td>
+    <td>${esc(item.property_type||'Imóvel')}<span class="table-sub">${item.transaction==='rent'?'Locação':'Venda'}</span></td>
+    <td><strong>${brl(item.price)}</strong></td>
+    <td>${precisionTag(item.precision)}</td>
+    <td>${esc(item.source)}</td>
+    <td>${item.url?`<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">Anúncio ↗</a>`:'—'}</td>
+  </tr>`).join(''):`<tr><td colspan="7">${empty('Nenhum anúncio encontrado','Cadastre um site público na seção Fontes automáticas e execute a varredura.',false)}</td></tr>`;
+  const zonelist=optionsFor(data.zones,state.scanZone,'Todas as zonas');
+  $('#main').innerHTML=header('PESQUISA PÚBLICA','Anúncios por zona e endereço','Unidades anunciadas em páginas pesquisadas; endereços e disponibilidade sujeitos a confirmação.',`<button class="btn" data-action="scan-export">↓ Exportar Excel</button><button class="btn btn-primary" data-nav="sources">＋ Cadastrar site</button>`)+
+    `<div class="notice"><strong>Precisão:</strong> "Zona" usa o arquivo configurável <code>config/zonas.json</code>. Bairros fora do mapa aparecem como "Não classificada". A varredura não identifica endereços que não estejam públicos.</div>`+
+    `<div class="toolbar"><input id="scan-search" class="control search" placeholder="Rua, edifício ou bairro..." value="${esc(state.scanSearch)}" aria-label="Buscar anúncios"><select class="control" id="scan-zone">${zonelist}</select><select class="control" id="scan-transaction"><option value="">Venda e locação</option><option value="rent"${selected('rent',state.scanTransaction)}>Locação</option><option value="sale"${selected('sale',state.scanTransaction)}>Venda</option></select><button class="btn btn-primary" data-action="scan-filter">Filtrar</button></div>`+
+    `<div class="panel table-panel"><div class="panel-head"><h3>${num(data.total)} anúncio(s) identificados</h3><p>Página ${data.page} de ${data.pages}</p></div><div class="table-wrap"><table><thead><tr><th>Zona / bairro</th><th>Endereço divulgado</th><th>Imóvel</th><th>Valor</th><th>Precisão</th><th>Origem</th><th>Link</th></tr></thead><tbody>${rows}</tbody></table></div></div>`+
+    `<div class="pagination"><button class="btn btn-small" data-action="scan-prev"${data.page<=1?' disabled':''}>← Anterior</button><span>${data.page} / ${data.pages}</span><button class="btn btn-small" data-action="scan-next"${data.page>=data.pages?' disabled':''}>Próxima →</button></div>`;
 }
 
 async function showSourceHistory(id){
@@ -181,10 +202,10 @@ async function createMap(buildings){
   if(markers.length>1){map.fitBounds(L.featureGroup(markers).getBounds().pad(.18));}
 }
 function renderAbout(){
-  $('#main').innerHTML=header('SOBRE O PRODUTO','Inteligência imobiliária, sem complicações','Um radar local para transformar dados autorizados em prioridades de captação.')+
-  `<div class="hero"><div class="hero-copy"><div class="hero-kicker">RADAR DE CAPTAÇÃO · V0.2</div><h2>Uma plataforma pensada para <span>identificar oportunidades reais.</span></h2><p>Os dados permanecem na instalação local. Feeds autorizados podem ser sincronizados enquanto o aplicativo está aberto.</p></div><div class="hero-orbit">⌖</div></div>`+
-  `<div class="about-grid"><div class="about-card"><div class="big-icon">▤</div><h3>Identificação conservadora</h3><p>Agrupa endereços completos e nome de prédio com bairro. Nunca inventa o número de um imóvel.</p></div><div class="about-card"><div class="big-icon">≡</div><h3>Controle de captações</h3><p>Status, observações, histórico e registros associados ajudam a organizar o acompanhamento.</p></div><div class="about-card"><div class="big-icon">↧</div><h3>Seus dados, suas regras</h3><p>Arquivos CSV, Excel e JSON, sincronização autorizada por feed e armazenamento local SQLite.</p></div></div>`+
-  `<div class="notice"><strong>Importante:</strong> não há coleta automatizada de páginas do ZAP, Viva Real ou outros portais; apenas feeds autorizados. Utilize somente informações obtidas de fontes com permissão compatível. Endereços parciais não identificam um prédio com segurança. O MVP não possui contas, login ou isolamento entre empresas — não exponha diretamente na internet.</div>`;
+  $('#main').innerHTML=header('SOBRE O PRODUTO','Inteligência imobiliária, sem complicações','Um radar local para organizar anúncios públicos e fontes de dados em oportunidades.')+
+  `<div class="hero"><div class="hero-copy"><div class="hero-kicker">RADAR DE CAPTAÇÃO · V0.3</div><h2>Uma plataforma pensada para <span>identificar oportunidades reais.</span></h2><p>Os dados permanecem na instalação local. Sites públicos (respeitando robots.txt) e feeds podem ser atualizados enquanto o aplicativo está aberto.</p></div><div class="hero-orbit">⌖</div></div>`+
+  `<div class="about-grid"><div class="about-card"><div class="big-icon">▤</div><h3>Identificação conservadora</h3><p>Agrupa endereços completos e nome de prédio com bairro. Nunca inventa o número de um imóvel.</p></div><div class="about-card"><div class="big-icon">≡</div><h3>Controle de captações</h3><p>Status, observações, histórico e registros associados ajudam a organizar o acompanhamento.</p></div><div class="about-card"><div class="big-icon">↧</div><h3>Seus dados, suas regras</h3><p>Arquivos CSV, Excel e JSON, varredura limitada de páginas públicas e armazenamento local SQLite.</p></div></div>`+
+  `<div class="notice"><strong>Importante:</strong> há coleta de HTML público para sites com acesso permitido por robots.txt, sem contornar bloqueios. Utilize somente informações obtidas de fontes com permissão compatível. Endereços parciais não identificam um prédio com segurança. O MVP não possui contas, login ou isolamento entre empresas — não exponha diretamente na internet.</div>`;
 }
 async function openBuilding(id){
   try{
@@ -220,9 +241,13 @@ document.addEventListener('click',async event=>{
   }
   if(b.id==='mobile-toggle'){$('#sidebar').classList.toggle('open');return;}
   switch(b.dataset.action){
+    case 'scan-filter':state.scanSearch=$('#scan-search').value.trim();state.scanZone=$('#scan-zone').value;state.scanTransaction=$('#scan-transaction').value;state.scanPage=1;nav('scan');return;
+    case 'scan-prev':state.scanPage=Math.max(1,state.scanPage-1);nav('scan');return;
+    case 'scan-next':state.scanPage++;nav('scan');return;
+    case 'scan-export':window.location.assign('/api/reports/availability/export?'+new URLSearchParams({zone:state.scanZone,transaction:state.scanTransaction,format:'xlsx'}));return;
     case 'source-run': {
       b.disabled=true;b.textContent='Sincronizando...';
-      try{const r=await request(`/sources/${b.dataset.id}/run`,{method:'POST'});toast(r.status==='error'?`Falha: ${r.message}`:`Sincronização: ${r.created} novo(s), ${r.updated} atualizado(s)`,r.status==='error');nav('sources');}
+      try{if(b.dataset.kind==='web'){await request(`/sources/${b.dataset.id}/start`,{method:'POST'});toast('Varredura iniciada. Consulte o histórico para ver o resultado.');nav('sources');}else{const r=await request(`/sources/${b.dataset.id}/run`,{method:'POST'});toast(r.status==='error'?`Falha: ${r.message}`:`Sincronização: ${r.created} novo(s), ${r.updated} atualizado(s)`,r.status==='error');nav('sources');}}
       catch(e){toast(e.message,true);b.disabled=false;b.textContent='↻ Sincronizar agora';}return;
     }
     case 'source-history':await showSourceHistory(b.dataset.id);return;
@@ -261,10 +286,20 @@ document.addEventListener('submit',async e=>{
   try{await request('/listings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});toast('Anúncio cadastrado com sucesso!');closeModal();nav('buildings');}
   catch(error){toast(error.message,true);}
 });
+document.addEventListener('change',event=>{
+  if(event.target.id==='source-kind'){
+    const isFeed=event.target.value!=='web';
+    const wrap=$('#source-rights-wrap');
+    if(wrap){wrap.style.display=isFeed?'':'none';wrap.querySelector('input').required=isFeed;}
+    const location=$('#source-location');
+    if(location)location.placeholder=event.target.value==='file'?'exemplo_autorizado.json':'https://www.exemplo.com.br/imoveis';
+  }
+});
 document.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&$('#modal-root').children.length)closeModal();
   if(event.key==='Enter'){
     if(event.target.id==='building-search'){$('[data-action="building-filter"]')?.click();}
+    if(event.target.id==='scan-search'){$('[data-action="scan-filter"]')?.click();}
     if(event.target.id==='listing-search'){$('[data-action="listing-filter"]')?.click();}
     if(event.target.matches('tr.click-row')){const id=event.target.dataset.building;if(id)openBuilding(Number(id));}
   }

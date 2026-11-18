@@ -209,3 +209,7 @@ tbody tr:hover { background:#172a34; }
 #source-feedback {padding:0 22px;}
 @media(max-width:1050px){.sources-layout{grid-template-columns:1fr}.source-actions{max-width:240px}}
 @media(max-width:650px){.source-card{flex-direction:column}.source-actions{justify-content:flex-start;max-width:none}}
+/* Relatório de varredura por região */
+.pagination{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;color:var(--muted);font-size:13px}
+.table-panel .table-wrap{overflow-x:auto}
+.table-panel table{min-width:840px}

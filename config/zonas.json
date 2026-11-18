@@ -1,0 +1,11 @@
+{
+  "observacao": "Zonas indicativas, ajustáveis conforme critério do estudo. Bairros não relacionados permanecem 'Não classificada'. A presença de um anúncio não garante disponibilidade no dia da consulta.",
+  "cidades": {
+    "Porto Alegre": {
+      "Centro": ["Centro Histórico", "Cidade Baixa", "Bom Fim", "Farroupilha", "Praia de Belas"],
+      "Zona Norte": ["Sarandi", "Cristo Redentor", "Jardim Lindóia", "São João", "Passo d'Areia", "São Geraldo", "Navegantes"],
+      "Zona Sul": ["Tristeza", "Cavalhada", "Ipanema", "Guarujá", "Vila Assunção", "Pedra Redonda", "Belém Novo", "Hípica"],
+      "Zona Leste": ["Petrópolis", "Jardim Botânico", "Partenon", "Jardim do Salso", "Agronomia", "Vila Jardim"]
+    }
+  }
+}

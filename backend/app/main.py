@@ -1,4 +1,4 @@
-"""Local-first API with user-authorized feed synchronization. No portal scraping."""
+"""Local-first API: imported listings and responsible, public-page research crawler."""
 from __future__ import annotations
 import csv
 import io
@@ -22,6 +22,7 @@ from .database import Base, Building, Listing, Activity, DataSource, SourceRun, 
 from .logic import ListingInput, STATUS, ingest, map_input, serialize_building, serialize_listing
 from .sources import (SourceCreate, SourcePatch, source_to_dict, run_to_dict,
                       execute_source, due_sources, validate_filename)
+from .regions import zone_for
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "static"
@@ -93,7 +94,7 @@ def create_app(database_url: str | None = None, imports_dir: str | Path | None =
             if thread is not None:
                 thread.join(timeout=2)
 
-    app = FastAPI(title="Radar de Captação", version="0.2.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
+    app = FastAPI(title="Radar de Captação", version="0.3.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
     app.state.engine = engine
     app.state.SessionLocal = SessionLocal
     app.state.imports_dir = imports
@@ -105,7 +106,7 @@ def create_app(database_url: str | None = None, imports_dir: str | Path | None =
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "service": "radar-captacao", "version": "0.2.0", "scheduler_enabled": scheduler_enabled}
+        return {"status": "ok", "service": "radar-captacao", "version": "0.3.0", "scheduler_enabled": scheduler_enabled}
 
     @app.get("/api/dashboard")
     def dashboard(db: Session = Depends(get_db)):
@@ -128,6 +129,37 @@ def create_app(database_url: str | None = None, imports_dir: str | Path | None =
             "neighborhoods": [{"name": name, "count": count} for name, count in neighborhoods.most_common(8)],
             "top_buildings": [serialize_building(b) for b in ranked[:6]],
         }
+
+    @app.get("/api/reports/availability")
+    def availability_report(zone: str = "", city: str = "", neighborhood: str = "",
+                            transaction: str = "", precision: str = "", search: str = "",
+                            page: int = Query(1, ge=1), limit: int = Query(50, ge=1, le=200),
+                            db: Session = Depends(get_db)):
+        """Advertised units by zone and visible address; not verified current vacancies."""
+        query = select(Listing).where(Listing.listing_status == "active", Listing.duplicate_of.is_(None))
+        if city:
+            query = query.where(Listing.city.ilike(city))
+        if neighborhood:
+            query = query.where(Listing.neighborhood.ilike(neighborhood))
+        if transaction:
+            query = query.where(Listing.transaction == transaction)
+        if precision:
+            query = query.where(Listing.precision == precision)
+        if search:
+            pattern = f"%{search.strip()}%"
+            query = query.where(or_(Listing.street.ilike(pattern), Listing.neighborhood.ilike(pattern),
+                                    Listing.city.ilike(pattern), Listing.building_name.ilike(pattern)))
+        records = [{**serialize_listing(l), "zone": zone_for(l.city, l.neighborhood)} for l in db.scalars(query).all()]
+        available_zones = sorted({r['zone'] for r in records})
+        if zone:
+            records = [r for r in records if r['zone'] == zone]
+        records.sort(key=lambda r: (r['zone'], r['city'] or '', r['neighborhood'] or '',
+                                    r['street'] or '', r['street_number'] or '', r['id']))
+        total = len(records)
+        return {"items": records[(page-1)*limit:page*limit], "total":total,
+                "page":page, "pages":max(1,(total+limit-1)//limit),
+                "zones":available_zones,
+                "disclaimer":"Anúncios publicamente observados, disponibilidade e endereço devem ser confirmados."}
 
     @app.get("/api/meta")
     def meta(db: Session = Depends(get_db)):
@@ -326,6 +358,32 @@ def create_app(database_url: str | None = None, imports_dir: str | Path | None =
         finally:
             sync_lock.release()
 
+    @app.post("/api/sources/{source_id}/start", status_code=202)
+    def start_source_async(source_id: int, db: Session = Depends(get_db)):
+        """Starts a website scan in a worker so the browser never times out while crawling."""
+        if not db.get(DataSource, source_id):
+            raise HTTPException(404, "Fonte não encontrada")
+        if not sync_lock.acquire(blocking=False):
+            raise HTTPException(409, "Já existe outra varredura em andamento")
+
+        def worker():
+            try:
+                with SessionLocal() as session:
+                    source = session.get(DataSource, source_id)
+                    if source:
+                        execute_source(session, source, imports, import_rows)
+            except Exception as exc:
+                print(f"[Radar] Erro na varredura: {type(exc).__name__}: {exc}")
+            finally:
+                sync_lock.release()
+
+        try:
+            threading.Thread(target=worker, daemon=True, name=f"radar-scan-{source_id}").start()
+        except Exception:
+            sync_lock.release()
+            raise
+        return {"started":True, "source_id":source_id, "message":"Varredura iniciada em segundo plano"}
+
     @app.get("/api/sources/{source_id}/runs")
     def source_runs(source_id: int, db: Session = Depends(get_db)):
         if not db.get(DataSource, source_id):
@@ -371,7 +429,7 @@ def create_app(database_url: str | None = None, imports_dir: str | Path | None =
         return import_rows(rows, db)
 
     BUILDING_COLUMNS = ["id", "name", "city", "neighborhood", "street", "street_number", "precision", "confidence", "status", "listings_count", "units_estimated", "rent_count", "sale_count", "min_price", "notes"]
-    LISTING_COLUMNS = ["id", "source", "external_id", "url", "transaction", "property_type", "price", "area", "bedrooms", "parking", "city", "neighborhood", "street", "street_number", "building_name", "unit_ref", "precision", "duplicate_of"]
+    LISTING_COLUMNS = ["id", "source", "external_id", "url", "transaction", "property_type", "price", "area", "bedrooms", "parking", "city", "zone", "neighborhood", "street", "street_number", "building_name", "unit_ref", "precision", "duplicate_of"]
 
     def safe_cell(value):
         if value is None:
@@ -417,8 +475,23 @@ def create_app(database_url: str | None = None, imports_dir: str | Path | None =
 
     @app.get("/api/export/listings")
     def export_listings(format: Literal["csv", "xlsx"] = "xlsx", db: Session = Depends(get_db)):
-        rows = [serialize_listing(l) for l in db.scalars(select(Listing)).all()]
+        rows = [{**serialize_listing(l), "zone": zone_for(l.city, l.neighborhood)} for l in db.scalars(select(Listing)).all()]
         return create_export(rows, LISTING_COLUMNS, format, "radar-anuncios")
+
+    @app.get("/api/reports/availability/export")
+    def availability_export(format: Literal["csv", "xlsx"] = "xlsx", zone: str = "",
+                            city: str = "", transaction: str = "", db: Session = Depends(get_db)):
+        listings = db.scalars(select(Listing).where(Listing.listing_status == 'active',
+                                                     Listing.duplicate_of.is_(None))).all()
+        rows = [{**serialize_listing(l), "zone": zone_for(l.city, l.neighborhood)} for l in listings]
+        if zone:
+            rows = [r for r in rows if r['zone'] == zone]
+        if city:
+            rows = [r for r in rows if r['city'].casefold() == city.casefold()]
+        if transaction:
+            rows = [r for r in rows if r['transaction'] == transaction]
+        rows.sort(key=lambda r: (r['zone'], r['neighborhood'] or '', r['street'] or ''))
+        return create_export(rows, LISTING_COLUMNS, format, 'radar-varredura-regioes')
 
     @app.get("/api/example/csv")
     def example_csv():

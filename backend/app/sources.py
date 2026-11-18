@@ -1,7 +1,4 @@
-"""Approved feeds only: JSON/CSV over HTTPS or files inside a designated import folder.
-
-No crawling, search-site scraping, hidden-address recovery, or captcha bypass.
-"""
+"""Feeds locais/HTTPS e varredura cautelosa de HTML público sem contornar barreiras."""
 from __future__ import annotations
 
 import csv
@@ -41,14 +38,16 @@ class SourceCreate(BaseModel):
 
     @model_validator(mode="after")
     def valid(self):
-        if not self.rights_confirmed:
-            raise ValueError("Confirme que a fonte autoriza a coleta e este uso dos dados")
+        if self.kind in ("file", "https") and not self.rights_confirmed:
+            raise ValueError("Confirme que o feed ou arquivo foi disponibilizado para este uso")
         if self.kind == "file":
             self.location = validate_filename(self.location)
         elif self.kind == "https":
             validate_feed_url(self.location)
+        elif self.kind == "web":
+            validate_feed_url(self.location)
         else:
-            raise ValueError("Tipos permitidos: file ou https")
+            raise ValueError("Tipos permitidos: file, https ou web")
         return self
 
 
@@ -194,7 +193,12 @@ def execute_source(db: Session, source: DataSource, imports_dir: Path, importer)
     db.add(run)
     db.flush()
     try:
-        rows = parse_feed(read_source(source, imports_dir), source.location)
+        scan_info = None
+        if source.kind == 'web':
+            from .crawler import crawl_public_site
+            rows, scan_info = crawl_public_site(source.location)
+        else:
+            rows = parse_feed(read_source(source, imports_dir), source.location)
         # Stable identifiers make recurring imports idempotent; otherwise re-running
         # an incomplete feed could create duplicate listings every interval.
         accepted = []
@@ -209,6 +213,12 @@ def execute_source(db: Session, source: DataSource, imports_dir: Path, importer)
         run.updated = stats['updated']
         run.failed = stats['failed']
         run.message = f"{stats['created']} novos, {stats['updated']} atualizados, {stats['failed']} inválidos"
+        if scan_info is not None:
+            run.message = (f"{scan_info['pages']} páginas analisadas, {scan_info['extracted']} anúncios identificados; "
+                           + run.message)
+            if not rows:
+                run.status = 'partial'
+                run.message += '; sem endereços ou imóveis reconhecidos nas páginas visitadas'
         source.last_error = None if stats['failed'] == 0 else run.message
         source.last_result = run.status
     except Exception as exc:

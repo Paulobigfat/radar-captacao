@@ -1,40 +1,24 @@
-# Relatório técnico — Radar de Captação v0.2
+# Relatório técnico — Radar de Captação v0.3
 
-## Entregue
+## Entrega
 
-- Painel local responsivo: visão geral, oportunidades, anúncios, mapa condicional, importação e informações do produto.
-- Backend FastAPI com banco SQLite, modelos de anúncios, edifícios e histórico de atividades.
-- Importação em CSV, XLSX e JSON, cadastro manual, validação por registro e mensagens de erro.
-- Agrupamento conservador de edifícios por cidade/rua/número e agrupamento provisório por cidade/bairro/nome.
-- Atualização por origem + ID externo ou URL, com tentativa conservadora de marcar duplicidades quando a mesma unidade é explicitamente informada.
-- Workflow de captação: status, observações e histórico.
-- Pesquisa, filtros, paginação e exportação Excel/CSV.
-- Base de dados **fictícia** e modelo de planilha para demonstração.
-- Cadastro de fontes de dados autorizadas (arquivo local CSV/JSON ou feed HTTPS), sincronização periódica com servidor aberto, sincronização manual e histórico persistido.
-- Proteção básica contra SSRF (recusa de endereços privados, locais e redirecionamentos), limite de tamanho, controle de execução simultânea e tratamento de falhas sem apagar o histórico de imóveis.
-- Scripts de inicialização para Windows, documentação de API e testes automatizados.
+- Todo o conjunto da versão 0.2: painel, FastAPI, SQLite, importação CSV/JSON/XLSX, feeds, deduplicação, agrupamento, funil e exportações.
+- **Varredura de imobiliárias sem API/login**: recebe URL HTTPS pública, verifica `robots.txt`, percorre HTML e sitemaps, segue apenas links do domínio e limita 24 páginas por varredura.
+- Extrai campos anunciados em JSON-LD Schema.org quando presentes e usa heurísticas conservadoras de HTML para encontrar rua/número públicos, preço, bairro, cidade, área e finalidade.
+- Bloqueia redes privadas, URLs não HTTPS, redirecionamentos e dados de fontes cujo `robots.txt` negue o acesso. Não tenta CAPTCHA/login ou conteúdo privado.
+- Fila de execução em segundo plano com histórico consultável, sem travar a interface.
+- Relatório e exportação de anúncios por **zona, bairro, rua e número**, usando arquivo configurável `config/zonas.json`, com precisão explícita.
 
-## Verificação realizada
+## Verificações
 
-- Testes automatizados FastAPI/SQLite usando pytest: importação, normalização, agrupamento, duplicidades, filtros, status, comentários, exportação, proteção contra fórmulas em planilhas, sincronização repetida e falhas das fontes.
-- Validação de sintaxe de JavaScript com `node --check`.
+- Testes automatizados do backend e crawler em fixtures HTTP fictícias, incluindo casos de bloqueio e endereços não divulgados.
+- Verificação de sintaxe de JavaScript e compilação Python.
+- Verificação da API com cliente de testes FastAPI/SQLite.
 
-- Não foi possível concluir um teste visual de ponta a ponta com navegador neste ambiente devido a uma restrição administrativa de acesso do Chromium ao servidor local. Os testes de API, estáticos e de sintaxe passaram.
+## Limitações reconhecidas
 
-## Simplificações intencionais do MVP
-
-- Frontend usa HTML/CSS/JavaScript sem build (não React/Tailwind) para funcionar no cenário sem rede npm e com menor manutenção inicial.
-- Não inclui scraping, integração oficial com portais, geocodificação ou adivinhação de endereço.
-- Não inclui login, multi-tenant, migrations Alembic, assinatura SaaS ou deploy público.
-- Mapa opcional via Leaflet/CDN depende de internet e de coordenadas importadas.
-
-## Próximos passos, após validação comercial
-
-1. Importar conjuntos de dados reais e autorizados, revisar casos incertos e medir utilidade para captação.
-2. Adicionar autenticação, multiempresa, migrations e isolamento de dados antes de disponibilizar na internet.
-3. Contratar ou obter acesso a feeds autorizados de portais para alimentar o sistema com anúncios reais.
-4. Se necessário, migrar frontend para React + TypeScript e hospedar em ambiente seguro.
-
-## Resultado da versão 0.2
-
-A ferramenta possui **motor de sincronização em funcionamento** para fontes autorizadas; não inclui coleta automatizada de páginas públicas do ZAP/Viva Real. A integração com essas plataformas depende de permissão ou feed oficial compatível. A execução automática depende do servidor local estar aberto.
+- Sites que renderizam anúncios apenas por JavaScript, protegem páginas ou alteram HTML podem não produzir registros. Não há conectores específicos para marcas; a compatibilidade real deve ser testada por domínio.
+- `robots.txt` e URLs públicas não equivalem a uma licença automática de reutilização; o uso deve respeitar termos e legislação aplicáveis. O objetivo declarado como acadêmico não substitui esses cuidados.
+- Endereços não divulgados permanecem incompletos. O relatório indica imóveis **anunciados e observados**, não confirmação de unidades desocupadas.
+- A classificação geográfica por zona é **indicativa e configurável**. Porto Alegre possui apenas bairros de exemplo; demais bairros/cidades ficam sem classificação até inclusão no mapa.
+- A varredura só roda enquanto o servidor local estiver aberto. O aplicativo não foi preparado para exposição pública sem login/autorização.
