@@ -9,3 +9,9 @@ backend/data/
 *.db
 .DS_Store
 .coverage
+
+# Arquivos reais recebidos de parceiros (apenas exemplo fictício versionado)
+imports/*
+!imports/exemplo_autorizado.json
+!imports/LEIA-ME.txt
+radar-captacao-manifest.json

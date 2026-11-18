@@ -69,6 +69,36 @@ class Listing(Base):
     )
 
 
+class DataSource(Base):
+    __tablename__ = "data_sources"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    location: Mapped[str] = mapped_column(Text)
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=360)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    rights_confirmed: Mapped[bool] = mapped_column(default=False)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_result: Mapped[str | None] = mapped_column(String(20))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    runs: Mapped[list["SourceRun"]] = relationship(back_populates="source", cascade="all, delete-orphan")
+
+
+class SourceRun(Base):
+    __tablename__ = "source_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("data_sources.id"), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(20), default="running")
+    created: Mapped[int] = mapped_column(Integer, default=0)
+    updated: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String(500), default="")
+    source: Mapped[DataSource] = relationship(back_populates="runs")
+
+
 class Activity(Base):
     __tablename__ = "activities"
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -18,11 +18,14 @@ const empty = (heading, body, action) => `<div class="empty"><div class="empty-s
 
 async function request(path, options={}) {
   let response;
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),12000);
-  try { response=await fetch(`${API}${path}`,{...options,signal:controller.signal}); }
-  catch(err) { throw new Error(err?.name==='AbortError'?'A API não respondeu em 12 segundos. Confira /api/health.':'Falha na conexão com o servidor local.'); }
-  finally { clearTimeout(timer); }
+  // A timeout prevents an endless spinner when the browser cannot reach the API.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try { response = await fetch(`${API}${path}`, { ...options, signal: controller.signal }); }
+  catch (err) {
+    if (err?.name === 'AbortError') throw new Error('A API demorou para responder. Confira http://127.0.0.1:8000/api/health e o terminal.');
+    throw new Error('Não foi possível conectar ao servidor. Abra o endereço http://127.0.0.1:8000 (não abra index.html como arquivo).');
+  } finally { clearTimeout(timer); }
   const contentType=response.headers.get('content-type')||'';
   let data;
   if (contentType.includes('application/json')) { try {data=await response.json();} catch (_err) {data=null;} }
@@ -41,15 +44,15 @@ function header(eyebrow, title, description, buttons='') {
   return `<div class="page-head"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(title)}</h1><p class="page-description">${esc(description)}</p></div><div class="page-actions">${buttons}</div></div>`;
 }
 function nav(view) {
-  if (!['dashboard','buildings','listings','map','import','about'].includes(view)) return;
+  if (!['dashboard','buildings','listings','map','import','sources','about'].includes(view)) return;
   state.view=view;
   document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('active', button.classList.contains('nav-item') && button.dataset.nav === view));
   $('#sidebar').classList.remove('open');
-  const labels={dashboard:'Visão geral',buildings:'Oportunidades',listings:'Anúncios',map:'Mapa',import:'Importar dados',about:'Sobre o Radar'};
+  const labels={dashboard:'Visão geral',buildings:'Oportunidades',listings:'Anúncios',map:'Mapa',import:'Importar dados',sources:'Fontes automáticas',about:'Sobre o Radar'};
   $('#breadcrumb-current').textContent=labels[view];
   document.title=`${labels[view]} | Radar de Captação`;
   $('#main').innerHTML=loading();
-  ({ dashboard:renderDashboard, buildings:renderBuildings, listings:renderListings, map:renderMap, import:renderImport, about:renderAbout })[view]().catch(handleError);
+  ({ dashboard:renderDashboard, buildings:renderBuildings, listings:renderListings, map:renderMap, import:renderImport, sources:renderSources, about:renderAbout })[view]().catch(handleError);
 }
 function handleError(err) { console.error(err); $('#main').innerHTML=header('ERRO','Não foi possível carregar','Ocorreu um problema ao obter os dados.')+empty('Falha na conexão',err.message,false);toast(err.message,true); }
 function bindNavButtons(root=document) {
@@ -71,7 +74,7 @@ async function renderDashboard() {
   const chartMax=Math.max(...d.neighborhoods.map(n=>n.count),1);
   const chartRows=d.neighborhoods.length?d.neighborhoods.map(n=>`<div class="chart-row"><div class="chart-label" title="${esc(n.name)}">${esc(n.name)}</div><div class="chart-track"><div class="chart-fill" style="width:${Math.round(n.count/chartMax*100)}%"></div></div><div class="chart-count">${num(n.count)}</div></div>`).join(''):empty('Sem dados para analisar','Importe anúncios para visualizar a distribuição por bairro.',true);
   const best=d.top_buildings.length?d.top_buildings.map(b=>`<div class="bldg-item" role="button" tabindex="0" data-building="${b.id}"><div class="building-marker">▥</div><div class="bldg-text"><strong>${esc(placeName(b))}</strong><small>${esc(b.neighborhood||b.city||'Sem bairro')} · ${num(b.listings_count)} anúncio(s)</small></div>${pill(b.status)}</div>`).join(''):empty('Nenhum edifício ainda','Comece importando sua primeira planilha.',true);
-  $('#main').innerHTML=header('PAINEL DE INTELIGÊNCIA','Encontre onde estão as oportunidades.','Uma visão clara dos edifícios, anúncios e etapas de captação.',`<button class="btn btn-ghost" data-action="refresh">↻ Atualizar</button><button class="btn btn-primary" data-nav="buildings">Explorar oportunidades →</button>`)+
+  $('#main').innerHTML=header('PAINEL DE INTELIGÊNCIA','Encontre onde estão as oportunidades.','Uma visão clara dos edifícios, anúncios e etapas de captação.',`<button class="btn btn-ghost" data-action="refresh">↻ Atualizar</button><button class="btn btn-primary" data-nav="sources">Fontes automáticas →</button>`)+
     `<section class="hero"><div class="hero-copy"><div class="hero-kicker">✦ DADOS QUE GERAM OPORTUNIDADES</div><h2>Menos tempo procurando.<br><span>Mais imóveis para captar.</span></h2><p>Organize fontes autorizadas, identifique prédios e acompanhe cada possibilidade de captação em um só lugar.</p></div><div class="hero-orbit">⌖</div></section>`+
     `<section class="stats">${stats.map(s=>`<div class="stat"><div class="stat-row"><span class="stat-label">${esc(s[0])}</span><span class="stat-icon">${s[2]}</span></div><strong>${num(s[1])}</strong><div class="stat-foot">${esc(s[3])}</div></div>`).join('')}</section>`+
     `<section class="twocol"><div class="panel"><div class="panel-head"><div><h3>Edifícios em destaque</h3><p>Priorize locais com mais anúncios ativos</p></div><button class="panel-link" data-nav="buildings">Ver todos →</button></div>${best}</div><div class="panel"><div class="panel-head"><div><h3>Concentração por bairro</h3><p>Número de edifícios identificados</p></div></div><hr class="divider"><div class="chart">${chartRows}</div><div class="small-note">Indicadores baseados exclusivamente nos dados importados. Não representam todo o mercado imobiliário.</div></div></section>`;
@@ -119,6 +122,35 @@ function showImportResult(result){
   const target=$('#import-result');if(!target)return;
   target.innerHTML=`<div class="result"><strong>✓ Importação processada</strong><p>${num(result.created)} novo(s) anúncio(s) · ${num(result.updated)} atualizado(s) · ${num(result.duplicates)} possível(is) duplicidade(s) confirmada(s) por unidade · ${num(result.failed)} erro(s)</p>${result.errors.length?`<details><summary>Ver erros</summary>${result.errors.map(e=>`<p>Linha ${num(e.row)}: ${esc(e.message)}</p>`).join('')}</details>`:''}<button class="btn btn-primary" data-nav="buildings">Explorar edifícios →</button></div>`;
 }
+async function renderSources(){
+  const data=await request('/sources');
+  if(state.view!=='sources') return;
+  const summary = data.auto_sync ? 'A sincronização é verificada aproximadamente a cada 30 segundos enquanto o Radar está aberto.' : 'O agendador está desativado neste ambiente; utilize Sincronizar agora.';
+  const rows=data.items.length ? data.items.map(src=>`<div class="source-card">
+    <div class="source-info"><strong>${esc(src.name)}</strong><span class="table-sub">${src.kind==='file'?'Arquivo da pasta imports/':'Feed HTTPS autorizado'} · ${esc(src.location)}</span><span class="table-sub">A cada ${num(src.interval_minutes)} min · Última execução: ${stamp(src.last_run_at)}</span><span class="table-sub">${src.last_error?`⚠ ${esc(src.last_error)}`:src.last_result==='ok'?'✓ Última atualização concluída':'Aguardando a primeira atualização'}</span></div>
+    <div class="source-actions"><span class="pill ${src.last_result==='error'?'verify':'new'}">${src.enabled?'Ativa':'Pausada'}</span><button class="btn btn-small btn-primary" data-action="source-run" data-id="${src.id}">↻ Sincronizar agora</button><button class="btn btn-small" data-action="source-history" data-id="${src.id}">Histórico</button><button class="btn btn-small" data-action="source-toggle" data-id="${src.id}" data-enabled="${src.enabled}">${src.enabled?'Pausar':'Ativar'}</button><button class="btn btn-small btn-danger" data-action="source-delete" data-id="${src.id}">Excluir</button></div>
+  </div>`).join('') : empty('Nenhuma fonte cadastrada','Adicione um feed autorizado ou teste com o arquivo de exemplo na pasta imports/.',false);
+  $('#main').innerHTML=header('SINCRONIZAÇÃO','Fontes automáticas','Receba anúncios de parceiros e feeds cuja coleta e reutilização sejam autorizadas.',`<button class="btn" data-nav="import">Importar manualmente →</button>`)+
+    `<div class="notice"><strong>Importante:</strong> o Radar não consulta automaticamente ZAP Imóveis, Viva Real ou outras páginas de anúncios. Ele sincroniza apenas feeds CSV/JSON autorizados, sem deduzir endereços ocultos. ${esc(summary)}</div>`+
+    `<section class="sources-layout"><div class="panel sources-panel"><div class="panel-head"><div><h3>Fontes configuradas</h3><p>${num(data.items.length)} fonte(s) · dados mantidos no banco local</p></div></div>${rows}<div id="source-feedback"></div></div>
+    <form class="panel sources-form" id="source-form"><h3>Adicionar uma fonte</h3><p class="page-description">Conecte um arquivo disponibilizado por um parceiro ou feed autorizado.</p>
+    <div class="field"><label for="source-name">Nome da fonte</label><input id="source-name" name="name" required maxlength="100" placeholder="Ex.: Parceiro imobiliário"></div>
+    <div class="field"><label for="source-kind">Tipo de fonte</label><select id="source-kind" name="kind"><option value="file">Arquivo monitorado (local)</option><option value="https">URL HTTPS autorizada</option></select></div>
+    <div class="field"><label for="source-location">Arquivo / URL</label><input id="source-location" name="location" required placeholder="exemplo_autorizado.json"></div>
+    <div class="field"><label for="source-interval">Intervalo de atualização (minutos)</label><input id="source-interval" name="interval_minutes" type="number" min="15" max="10080" value="360"></div>
+    <label class="source-check"><input type="checkbox" name="rights_confirmed" required> Confirmo que tenho autorização para obter e utilizar esses dados nesta finalidade.</label>
+    <button class="btn btn-primary" type="submit">＋ Adicionar fonte</button>
+    <div class="small-note">Teste gratuito: use <code>exemplo_autorizado.json</code>, incluído na pasta <code>imports/</code>. Para arquivos próprios, copie CSV ou JSON para essa pasta. Fontes HTTPS precisam ser públicas, sem autenticação e sem redirecionamento.</div></form></section>`;
+}
+
+async function showSourceHistory(id){
+  try {
+    const data=await request(`/sources/${id}/runs`);
+    const target=$('#source-feedback');if(!target)return;
+    target.innerHTML=`<div class="result"><strong>Últimas sincronizações</strong>${data.items.length?data.items.map(r=>`<p>${stamp(r.started_at)} — ${esc(r.status)} — ${num(r.created)} novos / ${num(r.updated)} atualizados / ${num(r.failed)} inválidos · ${esc(r.message)}</p>`).join(''):'<p>Nenhuma sincronização realizada.</p>'}</div>`;
+  }catch(e){toast(e.message,true);}
+}
+
 async function renderMap(){
   const data=await request('/buildings?limit=100&page=1');
   if(state.view!=='map')return;
@@ -150,9 +182,9 @@ async function createMap(buildings){
 }
 function renderAbout(){
   $('#main').innerHTML=header('SOBRE O PRODUTO','Inteligência imobiliária, sem complicações','Um radar local para transformar dados autorizados em prioridades de captação.')+
-  `<div class="hero"><div class="hero-copy"><div class="hero-kicker">RADAR DE CAPTAÇÃO · V0.1</div><h2>Uma plataforma pensada para <span>identificar oportunidades reais.</span></h2><p>Todos os dados permanecem na instalação local. Não há integração com redes sociais ou portais imobiliários por padrão.</p></div><div class="hero-orbit">⌖</div></div>`+
-  `<div class="about-grid"><div class="about-card"><div class="big-icon">▤</div><h3>Identificação conservadora</h3><p>Agrupa endereços completos e nome de prédio com bairro. Nunca inventa o número de um imóvel.</p></div><div class="about-card"><div class="big-icon">≡</div><h3>Controle de captações</h3><p>Status, observações, histórico e registros associados ajudam a organizar o acompanhamento.</p></div><div class="about-card"><div class="big-icon">↧</div><h3>Seus dados, suas regras</h3><p>Arquivos CSV, Excel e JSON. Exportações e armazenamento local SQLite, sem serviços pagos.</p></div></div>`+
-  `<div class="notice"><strong>Importante:</strong> não há coleta automatizada do ZAP, Viva Real ou outros portais. Utilize somente informações obtidas de fontes com permissão compatível. Endereços parciais não identificam um prédio com segurança. O MVP não possui contas, login ou isolamento entre empresas — não exponha diretamente na internet.</div>`;
+  `<div class="hero"><div class="hero-copy"><div class="hero-kicker">RADAR DE CAPTAÇÃO · V0.2</div><h2>Uma plataforma pensada para <span>identificar oportunidades reais.</span></h2><p>Os dados permanecem na instalação local. Feeds autorizados podem ser sincronizados enquanto o aplicativo está aberto.</p></div><div class="hero-orbit">⌖</div></div>`+
+  `<div class="about-grid"><div class="about-card"><div class="big-icon">▤</div><h3>Identificação conservadora</h3><p>Agrupa endereços completos e nome de prédio com bairro. Nunca inventa o número de um imóvel.</p></div><div class="about-card"><div class="big-icon">≡</div><h3>Controle de captações</h3><p>Status, observações, histórico e registros associados ajudam a organizar o acompanhamento.</p></div><div class="about-card"><div class="big-icon">↧</div><h3>Seus dados, suas regras</h3><p>Arquivos CSV, Excel e JSON, sincronização autorizada por feed e armazenamento local SQLite.</p></div></div>`+
+  `<div class="notice"><strong>Importante:</strong> não há coleta automatizada de páginas do ZAP, Viva Real ou outros portais; apenas feeds autorizados. Utilize somente informações obtidas de fontes com permissão compatível. Endereços parciais não identificam um prédio com segurança. O MVP não possui contas, login ou isolamento entre empresas — não exponha diretamente na internet.</div>`;
 }
 async function openBuilding(id){
   try{
@@ -188,6 +220,21 @@ document.addEventListener('click',async event=>{
   }
   if(b.id==='mobile-toggle'){$('#sidebar').classList.toggle('open');return;}
   switch(b.dataset.action){
+    case 'source-run': {
+      b.disabled=true;b.textContent='Sincronizando...';
+      try{const r=await request(`/sources/${b.dataset.id}/run`,{method:'POST'});toast(r.status==='error'?`Falha: ${r.message}`:`Sincronização: ${r.created} novo(s), ${r.updated} atualizado(s)`,r.status==='error');nav('sources');}
+      catch(e){toast(e.message,true);b.disabled=false;b.textContent='↻ Sincronizar agora';}return;
+    }
+    case 'source-history':await showSourceHistory(b.dataset.id);return;
+    case 'source-toggle': {
+      try {await request(`/sources/${b.dataset.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:b.dataset.enabled!=='true'})});nav('sources');}
+      catch(e){toast(e.message,true);}return;
+    }
+    case 'source-delete': {
+      if(!confirm('Excluir esta fonte e seu histórico? Os anúncios já importados serão mantidos.'))return;
+      try{await request(`/sources/${b.dataset.id}`,{method:'DELETE'});toast('Fonte excluída; anúncios preservados.');nav('sources');}
+      catch(e){toast(e.message,true);}return;
+    }
     case 'refresh':nav('dashboard');break;
     case 'manual':manualModal();break;
     case 'choose-file':$('#upload-file')?.click();break;
@@ -198,6 +245,15 @@ document.addEventListener('click',async event=>{
   }
 });
 document.addEventListener('submit',async e=>{
+  if(e.target.id==='source-form'){
+    e.preventDefault();
+    const form=e.target;const values=Object.fromEntries(new FormData(form).entries());
+    const payload={...values,interval_minutes:Number(values.interval_minutes),rights_confirmed:values.rights_confirmed==='on'};
+    const submit=form.querySelector('[type=submit]');submit.disabled=true;
+    try{await request('/sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});toast('Fonte adicionada. Clique em Sincronizar agora para importar.');nav('sources');}
+    catch(error){toast(error.message,true);submit.disabled=false;}
+    return;
+  }
   if(e.target.id!=='manual-form')return;
   e.preventDefault();
   const data=Object.fromEntries(new FormData(e.target).entries());

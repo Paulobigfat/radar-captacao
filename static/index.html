@@ -13,12 +13,13 @@
     document.addEventListener('DOMContentLoaded', () => {
       const main = document.getElementById('main');
       if (location.protocol === 'file:') {
-        main.innerHTML = '<section class="empty"><h2>Abra o Radar pelo servidor local</h2><p>Execute iniciar_windows.bat e acesse http://127.0.0.1:8000 no navegador.</p></section>';
+        main.innerHTML = '<section class="empty"><h2>Abra o Radar pelo servidor local</h2><p>Não abra <code>index.html</code> diretamente. Execute <code>iniciar_windows.bat</code> e acesse <strong>http://127.0.0.1:8000</strong> no navegador.</p></section>';
         return;
       }
+      // Give a meaningful diagnostic if the frontend script cannot start.
       setTimeout(() => {
         if (main?.querySelector('.loading-screen')) {
-          main.innerHTML = '<section class="empty"><h2>O painel não respondeu</h2><p>Confira /api/health, recarregue com Ctrl+F5 e veja o console em F12.</p></section>';
+          main.innerHTML = '<section class="empty"><h2>O painel não respondeu</h2><p>Tente <a href="/api/health" target="_blank" rel="noopener">verificar a API</a>, atualize com Ctrl+F5 e confira os erros no console (F12).</p></section>';
         }
       }, 15000);
     });
@@ -41,11 +42,12 @@
       <div class="nav-category second">FERRAMENTAS</div>
       <nav class="side-nav" aria-label="Ferramentas">
         <button type="button" class="nav-item" data-nav="import"><span class="nav-ico">⇧</span><span>Importar dados</span></button>
+        <button type="button" class="nav-item" data-nav="sources"><span class="nav-ico">↻</span><span>Fontes automáticas</span></button>
         <button type="button" class="nav-item" data-nav="about"><span class="nav-ico">ⓘ</span><span>Sobre o Radar</span></button>
       </nav>
       <div class="side-bottom">
         <div class="side-insight"><div class="insight-mark">✦</div><strong>Da informação à captação.</strong><p>Transforme anúncios dispersos em oportunidades organizadas.</p><button type="button" data-nav="import">Importar anúncios <span>↗</span></button></div>
-        <div class="sidebar-foot"><span class="live-pulse"></span><span>Ambiente local</span><span class="foot-version">v0.1</span></div>
+        <div class="sidebar-foot"><span class="live-pulse"></span><span>Ambiente local</span><span class="foot-version">v0.2</span></div>
       </div>
     </aside>
     <div class="workspace">
@@ -54,7 +56,7 @@
         <div class="topbar-actions"><div class="topbar-tag"><span class="live-pulse"></span> Sistema operacional</div><button class="btn btn-primary btn-top" data-nav="import">＋ <span>Importar anúncios</span></button><div class="avatar">RC</div></div>
       </header>
       <main class="main" id="main" aria-live="polite"><div class="loading-screen"><span class="spinner"></span> Carregando Radar...</div></main>
-      <footer class="footer"><span>RADAR DE CAPTAÇÃO <span class="f-separator">/</span> Versão local</span><span>Dados importados por você • Nenhuma coleta automática</span></footer>
+      <footer class="footer"><span>RADAR DE CAPTAÇÃO <span class="f-separator">/</span> Versão local</span><span>Dados próprios ou feeds autorizados • Sem scraping de portais</span></footer>
     </div>
   </div>
   <div id="modal-root"></div>

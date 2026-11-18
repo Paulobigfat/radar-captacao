@@ -2,9 +2,9 @@
 
 **Identifique edifícios com anúncios imobiliários e organize oportunidades de captação.**
 
-Aplicação web **local-first**, gratuita para execução local, com painel responsivo, backend Python/FastAPI, banco SQLite, organização de anúncios por prédio e controle do funil de prospecção.
+Aplicação web **local-first**, gratuita para execução local, com painel responsivo, backend Python/FastAPI, banco SQLite, organização de anúncios por prédio, **sincronização automática de feeds autorizados** e controle do funil de prospecção.
 
-> **Atenção:** a ferramenta não extrai anúncios automaticamente do ZAP Imóveis, Viva Real ou outros portais. Ela importa apenas dados fornecidos por você, de fontes cujo uso seja autorizado. Ela não revela proprietários nem endereços ocultos.
+> **Atenção:** a ferramenta não extrai anúncios automaticamente do ZAP Imóveis, Viva Real ou outros portais. Ela pode importar dados fornecidos por você e sincronizar **feeds CSV/JSON para os quais você tem autorização de acesso e uso**. Ela não revela proprietários nem endereços ocultos.
 
 ## 1. Primeiros passos (Windows)
 
@@ -12,7 +12,7 @@ Aplicação web **local-first**, gratuita para execução local, com painel resp
 2. Extraia o projeto ZIP ou clone este repositório.
 3. Execute o arquivo **`iniciar_windows.bat`** na pasta raiz.
 4. Aguarde a instalação inicial das dependências e a mensagem `Uvicorn running...`.
-5. Abra **http://127.0.0.1:8000** no navegador.
+5. O navegador abre automaticamente depois que `/api/health` responde. Caso necessário, acesse **http://127.0.0.1:8000**. Mantenha o terminal aberto.
 
 O banco de dados é criado automaticamente em `backend/data/radar.db`. Ele não é versionado pelo Git. **Faça cópias de segurança desse arquivo.**
 
@@ -39,13 +39,36 @@ uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 - **Oportunidades:** busque edifícios, filtre por bairro e status e abra detalhes.
 - **Anúncios:** consulte valores, informações disponíveis, links de origem e nível de precisão.
 - **Mapa:** exibe edifícios com coordenadas informadas na importação. A visualização cartográfica usa Leaflet/OpenStreetMap via CDN, exigindo internet e disponibilidade dos serviços de mapas. Sem internet, os demais recursos continuam funcionando.
+- **Fontes automáticas:** cadastre CSV/JSON na pasta `imports/` ou um feed HTTPS autorizado; sincronize quando desejar ou por intervalo enquanto o servidor estiver aberto.
 - **Importar dados:** envie planilhas CSV/XLSX ou arquivos JSON. Há um modelo e dados fictícios de demonstração acessíveis pela tela.
 - **Cadastro manual:** insira anúncios individualmente.
 - **Exportação:** baixe anúncios ou edifícios em Excel e CSV pela API.
 
 Para iniciar com dados fictícios, abra **Importar dados** e clique em **Carregar dados fictícios de demonstração**. Esses registros **não representam imóveis reais** e contêm endereços inventados.
 
-## 3. Formato dos arquivos
+## 3. Sincronização automática com fontes autorizadas
+
+Para experimentar **sem dados reais**, abra o menu **Fontes automáticas**, preencha:
+
+- Nome: `Demonstração agendada`.
+- Tipo: `Arquivo monitorado (local)`.
+- Arquivo: `exemplo_autorizado.json`.
+- Intervalo: 360 minutos (pode alterar para 15 minutos no teste).
+- Marque a declaração de autorização (o arquivo de exemplo contém apenas endereços inventados), clique em **Adicionar fonte** e depois em **Sincronizar agora**.
+
+O arquivo está incluído na pasta `imports/` do projeto. **Os anúncios do exemplo são inteiramente fictícios.** Os resultados aparecem em **Oportunidades** e em **Anúncios**. Se sincronizar de novo, os registros com o mesmo código são atualizados em vez de duplicados. Para usar uma planilha própria, copie CSV ou JSON **para `imports/`** e configure o nome exato do arquivo.
+
+Também é possível configurar a URL de um **feed HTTPS autorizado** em formato JSON (lista ou `{ "items": [...] }`) ou CSV, respeitando a licença e a finalidade da fonte. O endereço deve ser HTTPS público, porta 443, sem redirecionamento. O Radar não faz login nem simula navegação em sites. Feeds que usam tokens na URL exigem cuidado para não compartilhar ou versionar esses segredos; prefira uma integração com autenticação apropriada antes do uso comercial.
+
+**Importante para sincronização periódica:** cada registro do feed deve trazer `id_externo` (ou `id_anuncio`) **ou** uma `url` estável, para que uma atualização não gere novos anúncios duplicados. O sistema consulta as fontes habilitadas a cada ~30 segundos e executa as que atingiram o intervalo configurado, **somente enquanto o servidor local está aberto**. A primeira sincronização ocorre automaticamente após o cadastro, na próxima verificação do agendador; o botão **Sincronizar agora** executa imediatamente. O histórico informa novas entradas, atualizações e erros. O sistema **não** marca anúncios como encerrados por sua ausência em um feed: a fonte deve fornecer explicitamente o status correto.
+
+- Limite por fonte: 5 MB / 2.500 anúncios por execução; conexão remota com tempo limite de 8 segundos.
+- Se uma fonte falhar, os anúncios já salvos continuam no banco.
+- Para desativar a atualização automática sem apagar cadastros, use **Pausar**.
+- Para desativar globalmente o agendador em um ambiente de teste, defina `RADAR_AUTO_SYNC=0` antes de iniciar o backend.
+- Para utilizar integrações oficiais ou licenciadas de portais, obtenha os detalhes contratuais e o formato do feed diretamente com o provedor.
+
+## 4. Formato dos arquivos
 
 Exemplo de colunas CSV aceitas (nomes em inglês também são aceitos):
 
@@ -63,7 +86,7 @@ Dados autorizados,EX-001,locacao,Apartamento,2500,70,2,1,Porto Alegre,Bom Fim,Ru
 
 São aceitos até **5 MB** e **2.500 registros por importação**. Linhas inválidas são reportadas sem interromper as demais.
 
-## 4. Como o agrupamento funciona
+## 5. Como o agrupamento funciona
 
 O sistema é intencionalmente **conservador**:
 
@@ -75,7 +98,7 @@ Quando dois anúncios citam a **mesma unidade** no mesmo prédio e finalidade, u
 
 **Importante:** `Registros não duplicados` não significa necessariamente `unidades únicas comprovadas`. Em anúncios com unidades ocultas ainda pode haver repetição.
 
-## 5. Fluxo de captação
+## 6. Fluxo de captação
 
 Cada edifício pode receber um status:
 
@@ -83,7 +106,7 @@ Cada edifício pode receber um status:
 
 Todos os estados podem ser escolhidos livremente no painel. Cada mudança gera um registro de atividade, e observações ficam associadas ao edifício.
 
-## 6. API e testes
+## 7. API e testes
 
 Documentação interativa da API: **http://127.0.0.1:8000/api/docs**.
 
@@ -102,6 +125,10 @@ Endpoints principais:
 | DELETE | `/api/listings/{id}` | Excluir registro |
 | POST | `/api/import/file` | Importar CSV/XLSX/JSON |
 | POST | `/api/import/json` | Importar lista JSON |
+| GET/POST | `/api/sources` | Listar/cadastrar fontes autorizadas |
+| PATCH/DELETE | `/api/sources/{id}` | Pausar/ativar/excluir fontes |
+| POST | `/api/sources/{id}/run` | Sincronizar agora |
+| GET | `/api/sources/{id}/runs` | Histórico de sincronizações |
 | GET | `/api/export/buildings?format=xlsx` | Exportar prédios |
 | GET | `/api/export/listings?format=csv` | Exportar anúncios |
 
@@ -114,36 +141,34 @@ python -m pytest -q
 
 O frontend utiliza **HTML/CSS/JavaScript puro**, servido pelo FastAPI, sem npm ou build. Essa decisão mantém a primeira versão executável localmente sem depender do registro npm. O painel pode ser migrado para React + TypeScript quando a funcionalidade comercial estiver validada.
 
-## 7. Segurança e limitações
+## 8. Segurança e limitações
 
 - **Somente uso local**: por padrão o servidor escuta `127.0.0.1` (não é acessível por outras máquinas na rede). A API não possui autenticação. **Não exponha o serviço na internet sem criar controle de acesso, isolamento, auditoria e outros mecanismos de proteção.**
 - Não inclui integrações pagas, agente de IA, scraping de portais, captura de contatos, adivinhação de endereços, autenticação, múltiplas empresas nem cobrança por assinatura.
 - Não assume que um anúncio esteja ativo por ter sido importado; o campo `listing_status` deve refletir informação atualizada pela fonte.
-- A atualização de anúncios acontece via reimportação ou novo cadastro; ainda não há monitoramento programado.
+- A atualização de anúncios pode acontecer por sincronização periódica de feeds autorizados enquanto o servidor estiver aberto; ainda não há serviço de monitoramento independente do computador ligado.
 - O banco é criado a partir dos modelos atuais (sem migrações Alembic neste MVP). Antes de atualizar versões futuras, faça backup de `backend/data/radar.db`.
 - Respeite os termos de cada fonte e a LGPD na coleta, armazenamento, exportação e uso de dados.
 - A tela de mapa usa Leaflet e OpenStreetMap via CDN, quando houver coordenadas. Os demais componentes não fazem chamadas externas.
 
-## 8. Publicação no GitHub
+## 9. Publicação no GitHub
 
-Se você recebeu o projeto em ZIP e já criou o repositório vazio:
+Se você recebeu o projeto em ZIP e deseja trabalhar localmente com o repositório existente:
 
 ```bash
 git clone https://github.com/Paulobigfat/radar-captacao.git
-# Copie o conteúdo deste ZIP para dentro da pasta radar-captacao, sem criar uma subpasta extra.
 cd radar-captacao
-git add .
-git commit -m "feat: implementa radar de captacao local"
-git push origin main
+# Os arquivos do projeto já estão versionados. Inicie pelo iniciar_windows.bat.
+git pull origin main
 ```
 
-Se `main` ainda não existir, crie a branch local (`git branch -M main`) antes do push. Não suba os arquivos de banco de dados nem tokens pessoais (`.gitignore` já os ignora).
+Não suba arquivos com dados reais, bancos de dados nem tokens pessoais. O `.gitignore` exclui o banco local e o conteúdo da pasta `imports/` exceto o exemplo fictício.
 
 ---
 
 **Stack:** Python • FastAPI • SQLAlchemy • SQLite • OpenPyXL • HTML/CSS/JavaScript • Leaflet (mapa opcional).
 
 
-### Diagnóstico de carregamento
+### Se o navegador ficar carregando indefinidamente
 
-Use `http://127.0.0.1:8000/` com o inicializador aberto. Confira `http://127.0.0.1:8000/api/health` e pressione `Ctrl+F5` para recarregar a interface.
+A aplicação precisa ser acessada em `http://127.0.0.1:8000/` com o arquivo `iniciar_windows.bat` aberto. Não abra `static/index.html` diretamente, nem utilize caminhos `file:///...`. Para testar o servidor, acesse `http://127.0.0.1:8000/api/health` e confirme que aparece `"status": "ok"`. Se a página estiver antiga, force uma recarga com `Ctrl+F5` e verifique o console do navegador em `F12`.

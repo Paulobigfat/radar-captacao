@@ -1,0 +1,4 @@
+Coloque aqui arquivos CSV ou JSON fornecidos por fontes com autorização compatível.
+Na tela Fontes automáticas, cadastre apenas o nome do arquivo (sem caminho).
+exemplo_autorizado.json contém apenas dados fictícios e é seguro para teste.
+O Radar verifica fontes com a aplicação aberta; não busca anúncios de portais por padrão.

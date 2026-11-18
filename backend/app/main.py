@@ -1,9 +1,11 @@
-"""Local-first API. No scraping, no contact harvesting, no external network calls."""
+"""Local-first API with user-authorized feed synchronization. No portal scraping."""
 from __future__ import annotations
 import csv
 import io
 import json
 import os
+import threading
+from contextlib import asynccontextmanager
 from collections import Counter
 from itertools import islice
 from pathlib import Path
@@ -13,10 +15,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from openpyxl import Workbook, load_workbook
-from .database import Base, Building, Listing, Activity, make_engine, make_session_factory
+from .database import Base, Building, Listing, Activity, DataSource, SourceRun, make_engine, make_session_factory
 from .logic import ListingInput, STATUS, ingest, map_input, serialize_building, serialize_listing
+from .sources import (SourceCreate, SourcePatch, source_to_dict, run_to_dict,
+                      execute_source, due_sources, validate_filename)
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "static"
@@ -35,16 +40,64 @@ class ActivityInput(BaseModel):
     message: str = Field(min_length=2, max_length=2000)
 
 
-def create_app(database_url: str | None = None) -> FastAPI:
+def create_app(database_url: str | None = None, imports_dir: str | Path | None = None) -> FastAPI:
     if database_url is None:
         DEFAULT_DB.parent.mkdir(parents=True, exist_ok=True)
         database_url = os.environ.get("DATABASE_URL", f"sqlite:///{DEFAULT_DB.as_posix()}")
+    imports = Path(imports_dir) if imports_dir is not None else ROOT / "imports"
+    imports.mkdir(parents=True, exist_ok=True)
     engine = make_engine(database_url)
     Base.metadata.create_all(engine)
     SessionLocal = make_session_factory(engine)
-    app = FastAPI(title="Radar de Captação", version="0.1.0", docs_url="/api/docs", redoc_url=None)
+    stop_event = threading.Event()
+    sync_lock = threading.Lock()
+    scheduler_enabled = database_url not in ("sqlite://", "sqlite:///:memory:") and os.getenv("RADAR_AUTO_SYNC", "1") == "1"
+
+    def sync_due():
+        if not sync_lock.acquire(blocking=False):
+            return
+        try:
+            with SessionLocal() as db:
+                ids = [s.id for s in due_sources(db)]
+            for source_id in ids:
+                if stop_event.is_set():
+                    break
+                with SessionLocal() as db:
+                    source = db.get(DataSource, source_id)
+                    if source and source.enabled:
+                        execute_source(db, source, imports, import_rows)
+        finally:
+            sync_lock.release()
+
+    def scheduler_loop():
+        # First run after startup, then poll for due sources while the app is open.
+        while not stop_event.wait(5):
+            try:
+                sync_due()
+            except Exception as exc:
+                print(f"[Radar] Falha no agendador: {type(exc).__name__}: {exc}")
+            if stop_event.wait(25):
+                break
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        thread = None
+        if scheduler_enabled:
+            stop_event.clear()
+            thread = threading.Thread(target=scheduler_loop, name="radar-feed-sync", daemon=True)
+            thread.start()
+        try:
+            yield
+        finally:
+            stop_event.set()
+            if thread is not None:
+                thread.join(timeout=2)
+
+    app = FastAPI(title="Radar de Captação", version="0.2.0", docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
     app.state.engine = engine
     app.state.SessionLocal = SessionLocal
+    app.state.imports_dir = imports
+    app.state.scheduler_enabled = scheduler_enabled
 
     def get_db():
         with SessionLocal() as session:
@@ -52,7 +105,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "service": "radar-captacao", "version": "0.1.0"}
+        return {"status": "ok", "service": "radar-captacao", "version": "0.2.0", "scheduler_enabled": scheduler_enabled}
 
     @app.get("/api/dashboard")
     def dashboard(db: Session = Depends(get_db)):
@@ -218,6 +271,68 @@ def create_app(database_url: str | None = None) -> FastAPI:
         db.commit()
         stats["failed"] = len(rows) - stats["created"] - stats["updated"]
         return stats
+
+    @app.get("/api/sources")
+    def list_sources(db: Session = Depends(get_db)):
+        sources = db.scalars(select(DataSource).order_by(DataSource.id.desc())).all()
+        return {"items": [source_to_dict(s) for s in sources], "auto_sync": scheduler_enabled}
+
+    @app.post("/api/sources", status_code=201)
+    def add_source(data: SourceCreate, db: Session = Depends(get_db)):
+        source = DataSource(**data.model_dump())
+        db.add(source)
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(409, "Já existe uma fonte com este nome") from exc
+        db.refresh(source)
+        return source_to_dict(source)
+
+    @app.patch("/api/sources/{source_id}")
+    def patch_source(source_id: int, data: SourcePatch, db: Session = Depends(get_db)):
+        source = db.get(DataSource, source_id)
+        if not source:
+            raise HTTPException(404, "Fonte não encontrada")
+        for key, value in data.model_dump(exclude_unset=True).items():
+            if value is not None:
+                setattr(source, key, value)
+        db.commit()
+        return source_to_dict(source)
+
+    @app.delete("/api/sources/{source_id}")
+    def delete_source(source_id: int, db: Session = Depends(get_db)):
+        if not sync_lock.acquire(blocking=False):
+            raise HTTPException(409, "Sincronização em andamento; tente novamente")
+        try:
+            source = db.get(DataSource, source_id)
+            if not source:
+                raise HTTPException(404, "Fonte não encontrada")
+            db.delete(source)
+            db.commit()
+            return {"deleted": True, "listings_preserved": True}
+        finally:
+            sync_lock.release()
+
+    @app.post("/api/sources/{source_id}/run")
+    def run_source_now(source_id: int, db: Session = Depends(get_db)):
+        if not sync_lock.acquire(blocking=False):
+            raise HTTPException(409, "Uma sincronização já está em andamento")
+        try:
+            source = db.get(DataSource, source_id)
+            if not source:
+                raise HTTPException(404, "Fonte não encontrada")
+            return execute_source(db, source, imports, import_rows)
+        finally:
+            sync_lock.release()
+
+    @app.get("/api/sources/{source_id}/runs")
+    def source_runs(source_id: int, db: Session = Depends(get_db)):
+        if not db.get(DataSource, source_id):
+            raise HTTPException(404, "Fonte não encontrada")
+        runs = db.scalars(select(SourceRun).where(SourceRun.source_id == source_id)
+                          .order_by(SourceRun.id.desc()).limit(20)).all()
+        return {"items": [run_to_dict(run) for run in runs]}
 
     @app.post("/api/import/json")
     def import_json(records: list[dict], db: Session = Depends(get_db)):
